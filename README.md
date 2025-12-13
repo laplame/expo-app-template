@@ -23,6 +23,12 @@ A comprehensive Expo app template with TypeScript, React Navigation, drawer menu
 npm install
 ```
 
+**Note:** This project uses:
+- **Expo SDK 54** with React Native 0.81.5
+- **New Architecture** enabled by default
+- **Reanimated 4.x** for animations (requires `react-native-worklets`)
+- **React Navigation 7.x** for navigation
+
 2. Configure environment variables:
 ```bash
 # Copy the example environment file
@@ -252,12 +258,15 @@ All features are documented with:
 - `typescript` - TypeScript support
 
 ### Navigation
-- `@react-navigation/native` - Core navigation
-- `@react-navigation/native-stack` - Stack navigator
-- `@react-navigation/drawer` - Drawer navigator
-- `react-native-drawer-layout` - Drawer implementation
-- `react-native-gesture-handler` - Gesture handling
-- `react-native-safe-area-context` - Safe area handling
+- `@react-navigation/native@^7.1.25` - Core navigation
+- `@react-navigation/native-stack@^7.8.6` - Stack navigator
+- `@react-navigation/drawer@^7.7.9` - Drawer navigator (compatible with Reanimated 4)
+- `react-native-drawer-layout@^4.2.0` - Drawer implementation
+- `react-native-gesture-handler@~2.28.0` - Gesture handling
+- `react-native-safe-area-context@~5.6.0` - Safe area handling
+- `react-native-screens@~4.16.0` - Native screen management
+- `react-native-reanimated@~4.1.1` - Animation library (New Architecture compatible)
+- `react-native-worklets@^0.7.1` - Worklets support for Reanimated 4
 
 ### UI Components
 - `@gluestack-ui/themed` - UI component library
@@ -280,8 +289,9 @@ All features are documented with:
 ## Scripts
 
 - `npm start` - Start the Expo development server
-- `npm run android` - Start on Android
-- `npm run ios` - Start on iOS
+- `npm run android` - Start on Android (builds and runs)
+- `npm run android:device` - Build and run on connected Android device
+- `npm run ios` - Start on iOS (builds and runs)
 - `npm run web` - Start on web
 
 ## Testing
@@ -304,6 +314,47 @@ See [CLEANUP.md](CLEANUP.md) for a comprehensive guide on:
 - Code sections that need modification
 - TODO comments throughout the codebase
 - Customization instructions
+
+## Recent Updates
+
+### Dependencies Updated (Latest)
+- ✅ **React Navigation 7.x** - Updated from 6.x for Reanimated 4 compatibility
+- ✅ **Reanimated 4.1.6** - Updated from 3.x with New Architecture support
+- ✅ **React Native Screens 4.16.0** - Updated for better New Architecture compatibility
+- ✅ **React Native Gesture Handler 2.28.0** - Latest version
+- ✅ **React Native Worklets 0.7.1** - Required dependency for Reanimated 4
+
+### Build Configuration
+- ✅ Android build script (`android:device`) added for device deployment
+- ✅ New Architecture enabled and tested
+- ✅ All dependencies compatible with Expo SDK 54
+
+### Known Issues Resolved
+- ✅ Fixed `useLegacyImplementation` error with Reanimated 4
+- ✅ Resolved `react-native-worklets` missing dependency
+- ✅ Fixed compilation errors with New Architecture
+
+## Troubleshooting
+
+If you encounter build issues:
+
+1. **Clean and rebuild:**
+   ```bash
+   rm -rf node_modules android/build android/app/build
+   npm install
+   npx expo prebuild --clean
+   ```
+
+2. **Check dependency compatibility:**
+   ```bash
+   npx expo install --check
+   ```
+
+3. **For Android device builds:**
+   - Ensure device is connected via USB with USB debugging enabled
+   - Or ensure device and computer are on the same WiFi network
+
+See [ERRORES_ANDROID.md](ERRORES_ANDROID.md) and [ERRORES_RUNTIME.md](ERRORES_RUNTIME.md) for detailed error documentation.
 
 ## License
 
