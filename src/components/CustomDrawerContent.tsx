@@ -1,37 +1,36 @@
 import React from 'react';
-import { Box, Text, VStack, Pressable, HStack, Divider } from '@gluestack-ui/themed';
+import { Box, Text, VStack, Pressable, HStack } from '@gluestack-ui/themed';
 import { DrawerContentScrollView, DrawerContentComponentProps } from '@react-navigation/drawer';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { useSettings } from '../context/SettingsContext';
+import { appVersion, appBuild, appTimestamp } from '../version';
 
 interface DrawerItem {
   id: string;
-  title: string;
+  titleEn: string;
+  titleEs: string;
   screen: keyof RootStackParamList;
   params?: any;
   icon?: string;
 }
 
-/**
- * TODO: MODIFY - Add/remove menu items here
- * 
- * To add a new menu item:
- * 1. Add the screen to RootStackParamList in AppNavigator.tsx
- * 2. Add the screen to Stack.Navigator in AppNavigator.tsx
- * 3. Add the menu item here with: { id, title, screen, icon, params? }
- * 
- * To remove a menu item:
- * 1. Remove the item from this array
- * 2. Optionally remove the screen from navigation (if not used elsewhere)
- */
 const drawerItems: DrawerItem[] = [
-  { id: '1', title: 'Home', screen: 'Home', icon: '🏠' },
-  { id: '2', title: 'Details', screen: 'Details', params: { itemId: 'drawer-item' }, icon: '📄' },
-  { id: '3', title: 'Form', screen: 'Form', icon: '📝' },
-  { id: '4', title: 'Media Upload', screen: 'MediaUpload', icon: '📷' },
-  { id: '5', title: 'GPS Navigation', screen: 'GPSNavigation', icon: '📍' },
+  { id: '1', titleEn: 'Home', titleEs: 'Inicio', screen: 'Home', icon: '🏠' },
+  { id: '2', titleEn: 'Mall & Order', titleEs: 'Tienda · Pedir', screen: 'MallOrder', icon: '🛒' },
+  { id: '3', titleEn: 'Wallet', titleEs: 'Billetera', screen: 'Wallet', icon: '💳' },
+  { id: '4', titleEn: 'Defi.Deal', titleEs: 'Defi.Deal', screen: 'DefiDeal', icon: '📖' },
+  { id: '5', titleEn: 'Coupons & Promotions', titleEs: 'Cupones y promociones', screen: 'PromotionsMap', icon: '🎫' },
+  { id: '6', titleEn: 'NYC (Know Your Client)', titleEs: 'NYC (Conoce a tu cliente)', screen: 'NYC', icon: '👤' },
+  { id: '7', titleEn: 'Upload promotion', titleEs: 'Subir promoción', screen: 'UploadPromotions', icon: '📤' },
+  { id: '8', titleEn: 'Influencers & Vote', titleEs: 'Influencers y votar', screen: 'InfluencersList', icon: '⭐' },
+  { id: '9', titleEn: 'Settings', titleEs: 'Configuración', screen: 'Settings', icon: '⚙️' },
 ];
 
 export default function CustomDrawerContent(props: DrawerContentComponentProps) {
+  const { language } = useSettings();
+  const appName = language === 'es' ? 'damecodigo' : 'link4deal';
+  const menuTitle = language === 'es' ? 'Menú' : 'Menu';
+
   const handleNavigation = (screen: keyof RootStackParamList, params?: any) => {
     // Close the drawer first
     props.navigation.closeDrawer();
@@ -44,25 +43,35 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
     });
   };
 
-  return (
-    <Box flex={1} bg="$backgroundLight0">
-      <DrawerContentScrollView {...props} contentContainerStyle={{ paddingTop: 20 }}>
-        <VStack space="md" px="$4" py="$2">
-          <Box py="$4" px="$4">
-            <Text fontSize="$2xl" fontWeight="$bold" color="$textLight900">
-              Menu
-            </Text>
-          </Box>
-          
-          <Divider />
+  // Get current route to highlight active item
+  const currentRoute = props.state?.routes[props.state?.index || 0]?.name || 'Home';
+  const activeRoute = (props.state?.routes[props.state?.index || 0]?.state as any)?.routes?.[(props.state?.routes[props.state?.index || 0]?.state as any)?.index || 0]?.name || 'Home';
 
-          <VStack space="sm" mt="$2">
-            {drawerItems.map((item) => (
+  return (
+    <Box flex={1} bg="$white">
+      {/* Green Header */}
+      <Box bg="#00704A" pt="$12" pb="$4" px="$4">
+        <VStack space="xs">
+          <Text fontSize="$3xl" fontWeight="$bold" color="$white">
+            {appName.toUpperCase()}
+          </Text>
+          <Text fontSize="$sm" color="$white" opacity={0.9}>
+            {menuTitle}
+          </Text>
+        </VStack>
+      </Box>
+
+      <DrawerContentScrollView {...props} contentContainerStyle={{ paddingTop: 0, flexGrow: 1 }}>
+        <VStack space="sm" px="$4" py="$2" flex={1}>
+          {drawerItems.map((item) => {
+            const isActive = activeRoute === item.screen;
+            return (
               <Pressable
                 key={item.id}
                 onPress={() => handleNavigation(item.screen, item.params)}
-                _pressed={{ bg: '$backgroundLight100' }}
+                _pressed={{ bg: 'rgba(0, 112, 74, 0.1)' }}
                 borderRadius="$md"
+                bg={isActive ? 'rgba(0, 112, 74, 0.1)' : 'transparent'}
               >
                 <HStack
                   space="md"
@@ -74,15 +83,32 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
                   {item.icon && (
                     <Text fontSize="$xl">{item.icon}</Text>
                   )}
-                  <Text fontSize="$md" color="$textLight900" fontWeight="$medium">
-                    {item.title}
+                  <Text 
+                    fontSize="$md" 
+                    color={isActive ? '#00704A' : '$textLight900'} 
+                    fontWeight={isActive ? '$bold' : '$medium'}
+                  >
+                    {language === 'es' ? item.titleEs : item.titleEn}
                   </Text>
                 </HStack>
               </Pressable>
-            ))}
-          </VStack>
+            );
+          })}
         </VStack>
       </DrawerContentScrollView>
+
+      {/* Version fixed at bottom of drawer */}
+      <Box px="$4" py="$3" borderTopWidth={1} borderTopColor="$borderLight200" bg="$white">
+        <Text fontSize="$xs" color="$textLight500">
+          v{appVersion} ({language === 'es' ? 'build' : 'build'} {appBuild})
+        </Text>
+        <Text fontSize="$xs" color="$textLight400" mt="$1">
+          {new Date(appTimestamp).toLocaleString(language === 'es' ? 'es' : 'en-US', {
+            dateStyle: 'short',
+            timeStyle: 'short',
+          })}
+        </Text>
+      </Box>
     </Box>
   );
 }

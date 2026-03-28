@@ -1,6 +1,6 @@
-# Expo App Template
+# link4deal / damecodigo
 
-A comprehensive Expo app template with TypeScript, React Navigation, drawer menu, reusable components, and MongoDB Atlas integration.
+A comprehensive React Native platform with TypeScript, React Navigation, drawer menu, reusable components, and MongoDB Atlas integration. Bilingual support: **link4deal** (English) and **damecodigo** (Spanish).
 
 ## Features
 
@@ -52,10 +52,21 @@ See `.env.example` for all available configuration options.
 npm start
 ```
 
+### Android: error al instalar (firma incompatible)
+
+Si ves `INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package com.shatec.link4deal signatures do not match`, la app ya instalada fue firmada con otra clave (p. ej. release vs debug). Desinstala y vuelve a instalar:
+
+```bash
+npm run android:uninstall
+npm run android:device
+```
+
+(O bien: `adb uninstall com.shatec.link4deal` y luego ejecuta de nuevo el run.)
+
 ## Project Structure
 
 ```
-expo-app-template/
+link4deal/
 ├── features/                      # Feature documentation and Gherkin scenarios
 │   ├── form.feature              # Form feature scenarios
 │   ├── media-upload.feature       # Media upload feature scenarios

@@ -20,5 +20,16 @@ allprojects {
   }
 }
 
+// Forzar JVM 17 en todos los módulos Kotlin (p. ej. metamask_sdk-react-native usa 11 por defecto)
+subprojects { subproject ->
+  subproject.afterEvaluate {
+    subproject.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+      kotlinOptions {
+        jvmTarget = "17"
+      }
+    }
+  }
+}
+
 apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

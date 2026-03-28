@@ -2,48 +2,52 @@ import React from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator } from '@react-navigation/drawer';
-import { Pressable } from '@gluestack-ui/themed';
-import { Text } from '@gluestack-ui/themed';
+import { Pressable, Text } from '@gluestack-ui/themed';
+import { useSettings } from '../context/SettingsContext';
 import HomeScreen from '../screens/HomeScreen';
-import DetailsScreen from '../screens/DetailsScreen';
-import FormScreen from '../screens/FormScreen';
-import MediaUploadScreen from '../screens/MediaUploadScreen';
-import GPSNavigationScreen from '../screens/GPSNavigationScreen';
+import WalletScreen from '../screens/WalletScreen';
+import NYCScreen from '../screens/NYCScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+import PromotionsMapScreen from '../screens/PromotionsMapScreen';
+import UploadPromotionsScreen from '../screens/UploadPromotionsScreen';
+import QuickRegisterScreen from '../screens/QuickRegisterScreen';
+import DefiDealScreen from '../screens/DefiDealScreen';
+import MallOrderScreen from '../screens/MallOrderScreen';
+import InfluencerSearchScreen from '../screens/InfluencerSearchScreen';
+import InfluencersListScreen from '../screens/InfluencersListScreen';
 import CustomDrawerContent from '../components/CustomDrawerContent';
+import type { InfluencerPlatform } from '../services/influencersApi';
 
-/**
- * TODO: MODIFY - Add new screen types here when creating new screens
- * 
- * This type defines all available screens and their parameters.
- * When adding a new screen:
- * 1. Add the screen name and params to this type
- * 2. Add the screen to the Stack.Navigator below
- * 3. Add menu item to CustomDrawerContent.tsx
- */
 export type RootStackParamList = {
   Home: undefined;
-  Details: { itemId?: string };  // TODO: MODIFY - Add more params if needed
-  Form: undefined;
-  MediaUpload: undefined;
-  GPSNavigation: undefined;
+  Wallet: undefined;
+  NYC: undefined;
+  Settings: undefined;
+  PromotionsMap: undefined;
+  UploadPromotions: undefined;
+  QuickRegister: undefined;
+  DefiDeal: undefined;
+  MallOrder: undefined;
+  InfluencerSearch: { initialQuery?: string; platform?: InfluencerPlatform; imageUri?: string };
+  InfluencersList: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Drawer = createDrawerNavigator();
 
 function StackNavigator() {
+  const { language } = useSettings();
   return (
     <Stack.Navigator
       initialRouteName="Home"
       screenOptions={({ navigation }) => ({
-        // TODO: MODIFY - Customize header styling here
-        // Current: Purple header with white text
+        // Header styling with green theme
         headerStyle: {
-          backgroundColor: '#6200ee',  // TODO: MODIFY - Change header color
+          backgroundColor: '#00704A',  // Green color matching app theme
         },
-        headerTintColor: '#fff',  // TODO: MODIFY - Change header text color
+        headerTintColor: '#fff',  // White text
         headerTitleStyle: {
-          fontWeight: 'bold',  // TODO: MODIFY - Change header font weight
+          fontWeight: 'bold',
         },
         headerLeft: () => (
           <Pressable
@@ -62,27 +66,57 @@ function StackNavigator() {
       <Stack.Screen 
         name="Home" 
         component={HomeScreen}
-        options={{ title: 'Home' }}
+        options={{ headerShown: false }}
       />
       <Stack.Screen 
-        name="Details" 
-        component={DetailsScreen}
-        options={{ title: 'Details' }}
+        name="Wallet" 
+        component={WalletScreen}
+        options={{ title: 'Wallet' }}
       />
       <Stack.Screen 
-        name="Form" 
-        component={FormScreen}
-        options={{ title: 'Form' }}
+        name="NYC" 
+        component={NYCScreen}
+        options={{ title: 'NYC' }}
       />
       <Stack.Screen 
-        name="MediaUpload" 
-        component={MediaUploadScreen}
-        options={{ title: 'Media Upload' }}
+        name="Settings" 
+        component={SettingsScreen}
+        options={{ title: 'Settings' }}
       />
       <Stack.Screen 
-        name="GPSNavigation" 
-        component={GPSNavigationScreen}
-        options={{ title: 'GPS Navigation' }}
+        name="PromotionsMap" 
+        component={PromotionsMapScreen}
+        options={{ title: 'Coupons & Promotions' }}
+      />
+      <Stack.Screen 
+        name="UploadPromotions" 
+        component={UploadPromotionsScreen}
+        options={{ title: 'Upload promotion' }}
+      />
+      <Stack.Screen 
+        name="QuickRegister" 
+        component={QuickRegisterScreen}
+        options={{ title: 'Sign up' }}
+      />
+      <Stack.Screen 
+        name="DefiDeal" 
+        component={DefiDealScreen}
+        options={{ title: 'Defi.Deal' }}
+      />
+      <Stack.Screen 
+        name="MallOrder" 
+        component={MallOrderScreen}
+        options={{ title: language === 'es' ? 'Tiendas' : 'Stores' }}
+      />
+      <Stack.Screen 
+        name="InfluencerSearch" 
+        component={InfluencerSearchScreen}
+        options={{ title: language === 'es' ? 'Buscar influencers' : 'Search influencers' }}
+      />
+      <Stack.Screen 
+        name="InfluencersList" 
+        component={InfluencersListScreen}
+        options={{ title: language === 'es' ? 'Influencers' : 'Influencers' }}
       />
     </Stack.Navigator>
   );

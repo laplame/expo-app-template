@@ -1,0 +1,13 @@
+# Copia este archivo y agrega las propiedades de firma si usas keystore de release.
+# Las propiedades por defecto ya permiten builds con debug.keystore para pruebas.
+
+# Para producción/distribución, descomenta y configura:
+# Ruta relativa a android/app/ (ej: release.keystore en android/app/)
+# LINK4DEAL_RELEASE_STORE_FILE=release.keystore
+# LINK4DEAL_RELEASE_STORE_PASSWORD=tu_password_seguro
+# LINK4DEAL_RELEASE_KEY_ALIAS=upload
+# LINK4DEAL_RELEASE_KEY_PASSWORD=tu_password_seguro
+
+# Generar keystore de release:
+# keytool -genkeypair -v -storetype PKCS12 -keystore android/app/release.keystore -alias upload -keyalg RSA -keysize 2048 -validity 10000
+# Guarda las contraseñas de forma segura; perderlas implica no poder actualizar la app.

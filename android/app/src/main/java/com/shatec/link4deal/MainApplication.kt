@@ -1,4 +1,4 @@
-package com.shatec.expoapptemplate
+package com.shatec.link4deal
 
 import android.app.Application
 import android.content.res.Configuration
