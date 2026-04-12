@@ -15,7 +15,8 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSFaceIDUsageDescription": "We use Face ID to verify your identity for KYC (Know Your Client) verification."
+        "NSFaceIDUsageDescription": "We use Face ID to verify your identity for KYC (Know Your Client) verification.",
+        "NSCameraUsageDescription": "We use the camera to scan QR codes when you receive payments."
       }
     },
     "android": {

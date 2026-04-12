@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useMemo, useState, useRef } from 'react';
 import {
   Box,
   Text,
@@ -12,24 +12,47 @@ import {
   InputField,
 } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
-import { Modal, View, Pressable as RNPressable, Linking, Alert, ImageBackground, Share, Image } from 'react-native';
-import { useNavigation, useRoute } from '@react-navigation/native';
+import { Modal, View, Pressable as RNPressable, Linking, Alert, ImageBackground, Share, Image, StyleSheet } from 'react-native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import type { RootStackParamList } from '../navigation/AppNavigator';
+import * as Location from 'expo-location';
+import { haversineMeters } from '../utils/geo';
 import QRCode from 'react-native-qrcode-svg';
 import { useSettings } from '../context/SettingsContext';
+import { useVerificationAccess } from '../context/VerificationAccessContext';
 import { useWalletBalance, USD_TO_MXN, WELCOME_BONUS_LUXAE } from '../context/WalletBalanceContext';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
 import PromoSignupPopUp from '../components/PromoSignupPopUp';
 import PromotionCard from '../components/PromotionCard';
-import { getPromotions, ApiPromotionDoc, promotionImageUrl } from '../services/promotionsApi';
-import { getCoffeePunches, setCoffeePunches, getKycForm, getPreferredMall, getCachedPromotions, setCachedPromotions, getUserId } from '../services/storage';
+import {
+  getPromotions,
+  ApiPromotionDoc,
+  promotionImageUrl,
+  getStoreCoordinatesFromDoc,
+  isGpsCouponRequired,
+  getLocationRadiusFromDoc,
+} from '../services/promotionsApi';
+import {
+  getCoffeePunches,
+  setCoffeePunches,
+  getKycForm,
+  getPreferredMall,
+  getCachedPromotions,
+  setCachedPromotions,
+  getWalletAddresses,
+} from '../services/storage';
 import type { PreferredMall } from '../services/storage';
 import { sendLoyaltyToServer, COFFEE_THRESHOLD } from '../services/loyaltyApi';
 import { useFocusEffect } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { getOrCreateDeviceId } from '../services/deviceIdentity';
 import { createDiscountQrToken } from '../services/discountQrApi';
+import { pickDefaultWalletAddress } from '../utils/walletQr';
+import { formatAddressForUi } from '../utils/addressDisplay';
+import AddressPayReceiveModal from '../components/AddressPayReceiveModal';
 
 export type InfluencerPlatform = 'youtube' | 'tiktok' | 'instagram';
+
 
 const PLATFORM_OPTIONS: { id: InfluencerPlatform; label: string; short: string; selectedBg: string }[] = [
   { id: 'youtube', label: 'YouTube', short: 'YT', selectedBg: '#FF0000' },
@@ -126,13 +149,17 @@ function getIndexTranslations(language: 'en' | 'es') {
       goToBuyButton: 'Ir a comprar',
       goToBuyButtonAmazon: 'Comprar en Amazon',
       redeemCoupon: 'Redimir cupón',
-      userQRTitle: 'Tu identificación',
-      userQRSubtitle: 'ID de usuario y dispositivo',
       welcomeBonusCta: `Recibe 25 ${TOKEN_SYMBOL} (≈ %s MXN) al completar tu registro.`,
       luxaeRateUsd: `25 ${TOKEN_SYMBOL} = 25 USD`,
       luxaeRateMxn: '≈ %s MXN',
       yourMall: 'Tu tienda',
       viewOffers: 'Ver ofertas',
+      geoStoreMissing:
+        'Esta promoción no tiene coordenadas de tienda. No se puede validar por GPS.',
+      geoPermissionDenied: 'Activa el permiso de ubicación para obtener el cupón en tienda.',
+      geoTooFar: (d: number, r: number) =>
+        `Estás a ${Math.round(d)} m del punto. Debes estar a máximo ${r} m para este cupón.`,
+      geoLocationError: 'No se pudo leer tu ubicación. Intenta de nuevo.',
     };
   }
   return {
@@ -191,6 +218,11 @@ function getIndexTranslations(language: 'en' | 'es') {
     statusSyncedMessage: "Your weekly coffee energy is amazing. You've got an extra coupon to share.",
     yourMall: 'Your Mall',
     viewOffers: 'View offers',
+    geoStoreMissing: 'This promotion has no store coordinates. GPS validation is not possible.',
+    geoPermissionDenied: 'Enable location permission to get the in-store coupon.',
+    geoTooFar: (d: number, r: number) =>
+      `You are ${Math.round(d)} m from the point. You must be within ${r} m for this coupon.`,
+    geoLocationError: 'Could not read your location. Try again.',
     searchInfluencers: 'Search influencers...',
     searchInfluencersByPlatform: 'Influencers on',
     searchEmpty: 'Enter a name or topic to search',
@@ -224,8 +256,6 @@ function getIndexTranslations(language: 'en' | 'es') {
     goToBuyButton: 'Go to buy',
     goToBuyButtonAmazon: 'Buy on Amazon',
     redeemCoupon: 'Redeem coupon',
-    userQRTitle: 'Your identification',
-    userQRSubtitle: 'User ID and device ID',
     welcomeBonusCta: `Get 25 ${TOKEN_SYMBOL} (25 USD) when you complete sign-up.`,
     luxaeRateUsd: `25 ${TOKEN_SYMBOL} = 25 USD`,
     luxaeRateMxn: '≈ %s MXN',
@@ -258,9 +288,12 @@ const KYC_TOTAL_FIELDS = KYC_FIELD_KEYS.length;
 
 export default function HomeScreen() {
   const navigation = useNavigation();
-  const route = useRoute();
+  const route = useRoute<RouteProp<RootStackParamList, 'Home'>>();
   const currentRoute = route.name ?? 'Home';
+  const mainScrollRef = useRef<import('react-native').ScrollView | null>(null);
+  const [promoSectionY, setPromoSectionY] = useState(0);
   const { language, userName } = useSettings();
+  const { revealWalletAddresses, refreshVerificationAccess } = useVerificationAccess();
   const { formattedBalance, formattedLuxaeBalance, luxaeBalance, currency } = useWalletBalance();
   const [redeemedProduct, setRedeemedProduct] = useState<{
     id: string;
@@ -270,6 +303,11 @@ export default function HomeScreen() {
     referralCode: string;
     walletAddress: string;
     imageUrl?: string | null;
+    /** Cupón con validación por ubicación (cerca del punto de tienda). */
+    gpsGate?: boolean;
+    storeLat?: number;
+    storeLng?: number;
+    radiusMeters?: number;
   } | null>(null);
   const [deviceId, setDeviceId] = useState('');
   const [secureRedeemCode, setSecureRedeemCode] = useState('');
@@ -290,7 +328,9 @@ export default function HomeScreen() {
   const [influencerPlatform, setInfluencerPlatform] = useState<InfluencerPlatform>('youtube');
   const [influencerSearchQuery, setInfluencerSearchQuery] = useState('');
   const [showUserQRModal, setShowUserQRModal] = useState(false);
-  const [userQRValue, setUserQRValue] = useState('');
+  const [homeWalletAddress, setHomeWalletAddress] = useState<string | null>(null);
+
+  const t = useMemo(() => getIndexTranslations(language), [language]);
 
   const openScreenshotPicker = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -337,12 +377,16 @@ export default function HomeScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      refreshVerificationAccess();
       getKycForm().then((data) => {
         const filled = KYC_FIELD_KEYS.filter((k) => (data[k] ?? '').trim().length > 0).length;
         setKycPercent(Math.round((filled / KYC_TOTAL_FIELDS) * 100));
       });
       getPreferredMall().then(setPreferredMall);
-    }, [])
+      getWalletAddresses().then((list) => {
+        setHomeWalletAddress(pickDefaultWalletAddress(list));
+      });
+    }, [refreshVerificationAccess])
   );
 
   const loadPromotions = React.useCallback(() => {
@@ -372,105 +416,21 @@ export default function HomeScreen() {
     }, [loadPromotions])
   );
 
+  useFocusEffect(
+    React.useCallback(() => {
+      const wantScroll = route.params?.scrollToPromotions;
+      if (!wantScroll || promoSectionY <= 0) return undefined;
+      const id = setTimeout(() => {
+        mainScrollRef.current?.scrollTo({ y: Math.max(0, promoSectionY - 12), animated: true });
+        navigation.setParams({ scrollToPromotions: undefined } as RootStackParamList['Home']);
+      }, 350);
+      return () => clearTimeout(id);
+    }, [route.params?.scrollToPromotions, promoSectionY, navigation])
+  );
+
   React.useEffect(() => {
     getOrCreateDeviceId().then(setDeviceId).catch(() => setDeviceId('dev_unknown'));
   }, []);
-
-  React.useEffect(() => {
-    let active = true;
-    if (!redeemedProduct || !deviceId) {
-      setSecureRedeemCode('');
-      setQrIssueState('idle');
-      setQrSecondsLeft(null);
-      setQrIssueError(null);
-      setQrWarning(null);
-      setRedirectToUrl(null);
-      return () => {
-        active = false;
-      };
-    }
-
-    setQrIssueState('issuing');
-    setQrIssueError(null);
-    setQrWarning(null);
-    setQrSecondsLeft(null);
-    setRedirectToUrl(null);
-    createDiscountQrToken({
-      deviceId,
-      influencerId: redeemedProduct.influencerId,
-      promotionId: redeemedProduct.id,
-      referralCode: redeemedProduct.referralCode,
-      discountPercentage: redeemedProduct.discountPercentage ?? 0,
-      walletAddress: redeemedProduct.walletAddress,
-    })
-      .then((res) => {
-        if (!active) return;
-        if (res.ok && res.noQr && res.redirectToUrl) {
-          setRedirectToUrl(res.redirectToUrl);
-          setQrIssueState('redirect');
-          setSecureRedeemCode('');
-          return;
-        }
-        if (res.ok && res.qrValue) {
-          setSecureRedeemCode(res.qrValue);
-          setQrIssueState('ready');
-          setQrSecondsLeft(res.ttlSeconds ?? 300);
-          setQrWarning(res.fallback ? (res.message ?? null) : null);
-          return;
-        }
-        setSecureRedeemCode('');
-        setQrIssueState('error');
-        setQrIssueError(res.message ?? null);
-      })
-      .catch(() => {
-        if (!active) return;
-        setSecureRedeemCode('');
-        setQrIssueState('error');
-        setQrIssueError('Network error');
-        setQrWarning(null);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [redeemedProduct, deviceId]);
-
-  const handleRetryCoupon = React.useCallback(() => {
-    if (!redeemedProduct || !deviceId) return;
-    setQrIssueError(null);
-    setQrIssueState('issuing');
-    setQrWarning(null);
-    setQrSecondsLeft(null);
-    createDiscountQrToken({
-      deviceId,
-      influencerId: redeemedProduct.influencerId,
-      promotionId: redeemedProduct.id,
-      referralCode: redeemedProduct.referralCode,
-      discountPercentage: redeemedProduct.discountPercentage ?? 0,
-      walletAddress: redeemedProduct.walletAddress,
-    })
-      .then((res) => {
-        if (res.ok && res.noQr && res.redirectToUrl) {
-          setRedirectToUrl(res.redirectToUrl);
-          setQrIssueState('redirect');
-          setSecureRedeemCode('');
-        } else if (res.ok && res.qrValue) {
-          setSecureRedeemCode(res.qrValue);
-          setQrIssueState('ready');
-          setQrSecondsLeft(res.ttlSeconds ?? 300);
-          setQrWarning(res.fallback ? (res.message ?? null) : null);
-        } else {
-          setSecureRedeemCode('');
-          setQrIssueState('error');
-          setQrIssueError(res.message ?? null);
-        }
-      })
-      .catch(() => {
-        setSecureRedeemCode('');
-        setQrIssueState('error');
-        setQrIssueError('Network error');
-      });
-  }, [redeemedProduct, deviceId]);
 
   React.useEffect(() => {
     if (qrIssueState !== 'ready' || qrSecondsLeft == null) return;
@@ -532,7 +492,106 @@ export default function HomeScreen() {
     return `LINK4DEAL-COFFEE-${userId}-${locationId}-${coffeeQRMinuteSlot}-${userSlug}-${coffeePunches}`;
   }, [deviceId, preferredMall?.id, coffeeQRMinuteSlot, userName, coffeePunches]);
 
-  const t = useMemo(() => getIndexTranslations(language), [language]);
+  const runIssueCouponQr = React.useCallback(async () => {
+    if (!redeemedProduct || !deviceId) return;
+    setQrIssueState('issuing');
+    setQrIssueError(null);
+    setQrWarning(null);
+    setQrSecondsLeft(null);
+    setRedirectToUrl(null);
+
+    let clientLatitude: number | undefined;
+    let clientLongitude: number | undefined;
+
+    if (redeemedProduct.gpsGate) {
+      if (redeemedProduct.storeLat == null || redeemedProduct.storeLng == null) {
+        setSecureRedeemCode('');
+        setQrIssueState('error');
+        setQrIssueError(t.geoStoreMissing);
+        return;
+      }
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') {
+          setSecureRedeemCode('');
+          setQrIssueState('error');
+          setQrIssueError(t.geoPermissionDenied);
+          return;
+        }
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const user = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+        const store = { lat: redeemedProduct.storeLat, lng: redeemedProduct.storeLng };
+        const d = haversineMeters(user, store);
+        const r = redeemedProduct.radiusMeters ?? 500;
+        if (d > r) {
+          setSecureRedeemCode('');
+          setQrIssueState('error');
+          setQrIssueError(t.geoTooFar(d, r));
+          return;
+        }
+        clientLatitude = user.lat;
+        clientLongitude = user.lng;
+      } catch {
+        setSecureRedeemCode('');
+        setQrIssueState('error');
+        setQrIssueError(t.geoLocationError);
+        return;
+      }
+    }
+
+    try {
+      const res = await createDiscountQrToken({
+        deviceId,
+        influencerId: redeemedProduct.influencerId,
+        promotionId: redeemedProduct.id,
+        referralCode: redeemedProduct.referralCode,
+        discountPercentage: redeemedProduct.discountPercentage ?? 0,
+        walletAddress: redeemedProduct.walletAddress,
+        clientLatitude,
+        clientLongitude,
+      });
+      if (res.ok && res.noQr && res.redirectToUrl) {
+        setRedirectToUrl(res.redirectToUrl);
+        setQrIssueState('redirect');
+        setSecureRedeemCode('');
+        return;
+      }
+      if (res.ok && res.qrValue) {
+        setSecureRedeemCode(res.qrValue);
+        setQrIssueState('ready');
+        setQrSecondsLeft(res.ttlSeconds ?? 300);
+        setQrWarning(res.fallback ? (res.message ?? null) : null);
+        return;
+      }
+      setSecureRedeemCode('');
+      setQrIssueState('error');
+      setQrIssueError(res.message ?? null);
+    } catch {
+      setSecureRedeemCode('');
+      setQrIssueState('error');
+      setQrIssueError('Network error');
+      setQrWarning(null);
+    }
+  }, [redeemedProduct, deviceId, t]);
+
+  React.useEffect(() => {
+    if (!redeemedProduct || !deviceId) {
+      setSecureRedeemCode('');
+      setQrIssueState('idle');
+      setQrSecondsLeft(null);
+      setQrIssueError(null);
+      setQrWarning(null);
+      setRedirectToUrl(null);
+      return;
+    }
+    runIssueCouponQr();
+  }, [redeemedProduct, deviceId, runIssueCouponQr]);
+
+  const handleRetryCoupon = React.useCallback(() => {
+    if (!redeemedProduct || !deviceId) return;
+    runIssueCouponQr();
+  }, [redeemedProduct, deviceId, runIssueCouponQr]);
+
   const appName = language === 'es' ? 'damecodigo' : 'link4deal';
   const displayName = (userName?.trim() || t.noRegistration);
 
@@ -615,6 +674,7 @@ export default function HomeScreen() {
         resizeMode="cover"
       >
         <ScrollView 
+          ref={mainScrollRef}
           flex={1} 
           showsVerticalScrollIndicator={false}
           contentContainerStyle={{ paddingBottom: 80 }}
@@ -648,12 +708,7 @@ export default function HomeScreen() {
               </Pressable>
             ) : (
               <Pressable
-                onPress={async () => {
-                  const uid = await getUserId();
-                  const qr = `LINK4DEAL-USER.${uid || deviceId || 'user'}.${deviceId || 'device'}`;
-                  setUserQRValue(qr);
-                  setShowUserQRModal(true);
-                }}
+                onPress={() => setShowUserQRModal(true)}
                 bg="$white"
                 borderRadius="$lg"
                 px="$4"
@@ -666,8 +721,28 @@ export default function HomeScreen() {
                 <Text fontSize="$xl" fontWeight="$semibold" color="#00704A">
                   {displayName}
                 </Text>
+                {homeWalletAddress ? (
+                  <VStack space="xs" mt="$1">
+                    <Text fontSize="$xs" color="$textLight500" numberOfLines={1}>
+                      {formatAddressForUi(homeWalletAddress, revealWalletAddresses)}
+                    </Text>
+                    {!revealWalletAddresses ? (
+                      <Text fontSize="$xs" color="$textLight400">
+                        {language === 'es'
+                          ? 'Completa verificación KYC o KYB para ver la dirección completa.'
+                          : 'Complete KYC or KYB verification to see your full address.'}
+                      </Text>
+                    ) : null}
+                  </VStack>
+                ) : (
+                  <Text fontSize="$xs" color="$textLight400" mt="$1">
+                    {language === 'es' ? 'Sin dirección en Billetera' : 'No Wallet address'}
+                  </Text>
+                )}
                 <Text fontSize="$xs" color="$textLight500" mt="$1">
-                  {language === 'es' ? 'Toca para ver tu QR de identificación' : 'Tap to see your ID QR'}
+                  {language === 'es'
+                    ? 'Toca para ver tu QR (identificación, pago y cobro con tu dirección de Billetera)'
+                    : 'Tap for your QR (ID, pay & receive with your Wallet address)'}
                 </Text>
               </Pressable>
             )}
@@ -903,6 +978,10 @@ export default function HomeScreen() {
           )}
 
           {/* Promociones activas (API): listado y QR de descuento */}
+          <View
+            onLayout={(e) => setPromoSectionY(e.nativeEvent.layout.y)}
+            collapsable={false}
+          >
           <VStack space="md" mt="$4">
             <VStack space="xs">
               <Text fontSize="$xl" fontWeight="$bold" color="$textLight900">
@@ -949,6 +1028,9 @@ export default function HomeScreen() {
                         const rawInfluencer = (doc as any).influencerId ?? (doc as any).creatorId ?? 'guest';
                         const rawWallet = (doc as any).walletAddress ?? (doc as any).storeWalletAddress ?? 'not-provided';
                         const referralCode = `L4D-${doc._id}-${Date.now().toString(36).toUpperCase()}`;
+                        const storePt = getStoreCoordinatesFromDoc(doc);
+                        const gpsReq = isGpsCouponRequired(doc);
+                        const radiusM = getLocationRadiusFromDoc(doc);
                         setRedeemedProduct({
                           id: doc._id,
                           name: doc.title || doc.productName || '',
@@ -957,6 +1039,10 @@ export default function HomeScreen() {
                           referralCode,
                           walletAddress: String(rawWallet),
                           imageUrl: promotionImageUrl(doc) ?? undefined,
+                          gpsGate: gpsReq,
+                          storeLat: storePt?.lat,
+                          storeLng: storePt?.lng,
+                          radiusMeters: radiusM,
                         });
                       }}
                     />
@@ -965,6 +1051,7 @@ export default function HomeScreen() {
               </HStack>
             </ScrollView>
             </VStack>
+          </View>
 
           {/* Recommendations for You */}
           <VStack space="md" mt="$4" pb="$4">
@@ -1273,37 +1360,11 @@ export default function HomeScreen() {
         </RNPressable>
       </Modal>
 
-      {/* Modal: QR con ID de usuario e ID de dispositivo (al tocar el nombre tras darse de alta) */}
-      <Modal
+      <AddressPayReceiveModal
         visible={showUserQRModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowUserQRModal(false)}
-      >
-        <RNPressable
-          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 24 }}
-          onPress={() => setShowUserQRModal(false)}
-        >
-          <View style={{ width: '100%', maxWidth: 320 }}>
-            <Box bg="$white" borderRadius="$2xl" p="$6" alignItems="center">
-              <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$1">
-                {t.userQRTitle}
-              </Text>
-              <Text fontSize="$sm" color="$textLight600" mb="$4" textAlign="center">
-                {t.userQRSubtitle}
-              </Text>
-              {userQRValue ? (
-                <Box bg="$white" p="$4" borderRadius="$lg" borderWidth={1} borderColor="$borderLight200">
-                  <QRCode value={userQRValue} size={200} color="#00704A" backgroundColor="white" />
-                </Box>
-              ) : null}
-              <Button mt="$5" size="md" bg="#00704A" onPress={() => setShowUserQRModal(false)}>
-                <ButtonText>{t.close}</ButtonText>
-              </Button>
-            </Box>
-          </View>
-        </RNPressable>
-      </Modal>
+        onClose={() => setShowUserQRModal(false)}
+        initialIntent="receive"
+      />
 
       <PromoSignupPopUp />
     </Box>

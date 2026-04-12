@@ -3,53 +3,22 @@
   "version": "1.0",
   "glossary": [
     {
-      "term": "Deal",
-      "category": "Comercial",
-      "definition": "Acuerdo comercial digital que define producto, condiciones, comisión, duración y reglas de liquidación. En Link4Deal es un contrato ejecutable."
-    },
-    {
-      "term": "Promoción",
-      "category": "Comercial",
-      "definition": "Oferta publicada por un negocio que permite generar ventas a cambio de comisión. Está vinculada a un smart contract."
-    },
-    {
-      "term": "Referido",
-      "category": "Usuario",
-      "definition": "Persona o agente de IA que comparte un deal y recibe una comisión cuando se concreta la venta."
-    },
-    {
-      "term": "Comisión",
-      "category": "Financiero",
-      "definition": "Porcentaje o monto fijo definido en el contrato que se liquida automáticamente cuando se cumple la condición del deal."
-    },
-    {
-      "term": "Wallet",
-      "category": "Infraestructura",
-      "definition": "Cartera digital dentro de la app que permite recibir comisiones, enviar pagos, ejecutar contratos y firmar transacciones."
-    },
-    {
-      "term": "LUXAE y contrato ERC-20 (LXD)",
-      "category": "Token",
-      "definition": "En la app, el token de recompensas y saldos se muestra como LUXAE. En Polygon, el contrato ERC-20 usa el nombre LXD (estándar name). La dirección 0x sirve para ese token y para MATIC de red.",
-      "definitionEn": "In the app, rewards and balances are shown as LUXAE. On Polygon, the ERC-20 contract uses the name LXD (standard name field). Your 0x address holds that token and network MATIC for gas."
-    },
-    {
       "term": "Advertencia: borrar la app o los datos",
       "category": "Seguridad",
       "definition": "Si desinstalas la aplicación o borras los datos del dispositivo, las claves privadas guardadas aquí pueden perderse de forma irreversible. La app no puede recuperar tus fondos por ti. Haz copias de seguridad o exportaciones seguras si tu flujo lo permite.",
       "definitionEn": "If you uninstall the app or clear app data, private keys stored on this device may be lost permanently. The app cannot recover your funds for you. Use backups or secure export when available."
     },
     {
-      "term": "Advertencia: una dirección principal por dispositivo",
-      "category": "Seguridad",
-      "definition": "Se recomienda usar una dirección principal por dispositivo para no perder el rastro de tus fondos y reducir el riesgo de enviar a una cuenta equivocada.",
-      "definitionEn": "We recommend one primary address per device so you can track funds and reduce the risk of sending to the wrong account."
-    },
-    {
       "term": "Advertencia: generar nuevas direcciones",
       "category": "Seguridad",
-      "definition": "Al generar una nueva dirección para el token LUXAE (ERC-20 LXD) en Polygon, se añade otra a la lista; puedes tener varias. Revisa cuál está marcada como predeterminada y confirma el destino antes de enviar. Quitar una dirección de la lista no mueve los activos que ya estén en la cadena.",
-      "definitionEn": "When you generate a new address for the LUXAE token (ERC-20 LXD) on Polygon, another entry is added; you may have several. Check which is set as default and confirm the destination before sending. Removing an address from the list does not move assets already on-chain."
+      "definition": "Al generar una nueva dirección para el token LUXAE (ERC-20 LXD), se añade otra a la lista; puedes tener varias. Revisa cuál está marcada como predeterminada y confirma el destino antes de enviar. Quitar una dirección de la lista no mueve los activos que ya estén en la cadena.",
+      "definitionEn": "When you generate a new address for the LUXAE token (ERC-20 LXD), another entry is added; you may have several. Check which is set as default and confirm the destination before sending. Removing an address from the list does not move assets already on-chain."
+    },
+    {
+      "term": "Advertencia: los tokens no se venden por dinero Fiat",
+      "category": "Seguridad",
+      "definition": "Los tokens del ecosistema no se venden: nadie puede vender sus tokens a cambio de dinero fiat o cripto en mercados DeFi externos. No hay oferta de venta ni canje por efectivo fuera del modelo Link4Deal. Sí puedes transferir tokens dentro del mismo ecosistema (app, promociones y reglas del programa), siempre según las funciones y límites que habilite la aplicación.",
+      "definitionEn": "Ecosystem tokens are not sold: no one may sell their tokens for fiat or crypto on external DeFi markets. There is no sale or cash-out outside the Link4Deal model. You may transfer tokens within the same ecosystem (app, promotions and program rules), only through features and limits the app enables."
     },
     {
       "term": "Advertencia: tu responsabilidad",
@@ -58,29 +27,31 @@
       "definitionEn": "LUXAE balances in the app and on-chain assets depend on this installation and the network. You are responsible for your keys, backups, and transfers."
     },
     {
-      "term": "Token",
-      "category": "Financiero",
-      "definition": "Activo digital utilizado para liquidar promociones y transacciones dentro del ecosistema. Está denominado en USD y diseñado para estabilidad."
+      "term": "Advertencia: una dirección principal por dispositivo",
+      "category": "Seguridad",
+      "definition": "Se recomienda usar una dirección principal por dispositivo para no perder el rastro de tus fondos y reducir el riesgo de enviar a una cuenta equivocada.",
+      "definitionEn": "We recommend one primary address per device so you can track funds and reduce the risk of sending to the wrong account."
     },
     {
-      "term": "Smart Contract",
+      "term": "Agente de IA",
+      "category": "IA",
+      "definition": "Sistema automatizado capaz de consultar promociones, evaluar condiciones, ejecutar contratos y realizar compras autónomamente."
+    },
+    {
+      "term": "API",
       "category": "Infraestructura",
-      "definition": "Programa que se ejecuta automáticamente cuando se cumplen condiciones específicas, como pagar una comisión tras una venta válida."
+      "definition": "Interfaz técnica que permite integrar el sistema con aplicaciones externas o agentes automatizados."
     },
     {
-      "term": "Liquidación Automática",
+      "term": "APY",
       "category": "Financiero",
-      "definition": "Proceso mediante el cual el sistema distribuye pagos sin intervención manual una vez validada la transacción."
+      "definition": "Rendimiento porcentual anual. Rendimiento anual estimado de una inversión, incluyendo capitalización.",
+      "definitionEn": "Annual Percentage Yield. Estimated yearly return on an investment, including compounding."
     },
     {
-      "term": "Evento Comercial",
-      "category": "Operativo",
-      "definition": "Acción económica registrada en el sistema como venta, compra, pago o comisión que modifica el estado del negocio."
-    },
-    {
-      "term": "Hash",
-      "category": "Infraestructura",
-      "definition": "Código único generado a partir de una transacción que permite verificar integridad y construir trazabilidad."
+      "term": "Atribución",
+      "category": "Comercial",
+      "definition": "Proceso que determina quién generó una venta. En Link4Deal es automática y verificable por contrato."
     },
     {
       "term": "Cadena Histórica",
@@ -93,34 +64,9 @@
       "definition": "Principio donde cada transacción debe ser consistente con el estado previo del negocio. Si rompe coherencia, no se valida."
     },
     {
-      "term": "Nodo de Negocio",
-      "category": "Infraestructura",
-      "definition": "Unidad económica independiente dentro del ecosistema con historial verificable, wallet, contratos activos y servidor MCP."
-    },
-    {
-      "term": "Agente de IA",
-      "category": "IA",
-      "definition": "Sistema automatizado capaz de consultar promociones, evaluar condiciones, ejecutar contratos y realizar compras autónomamente."
-    },
-    {
-      "term": "MCP",
-      "category": "IA",
-      "definition": "Model Context Protocol. Interfaz que permite a sistemas de IA interactuar estructuradamente con estados, eventos y contratos del negocio."
-    },
-    {
-      "term": "Atribución",
-      "category": "Comercial",
-      "definition": "Proceso que determina quién generó una venta. En Link4Deal es automática y verificable por contrato."
-    },
-    {
-      "term": "API",
-      "category": "Infraestructura",
-      "definition": "Interfaz técnica que permite integrar el sistema con aplicaciones externas o agentes automatizados."
-    },
-    {
-      "term": "Estado",
-      "category": "Modelo",
-      "definition": "Condición actual del negocio en un momento dado, como stock, saldo, deuda o comisión acumulada."
+      "term": "Comisión",
+      "category": "Financiero",
+      "definition": "Porcentaje o monto fijo definido en el contrato que se liquida automáticamente cuando se cumple la condición del deal."
     },
     {
       "term": "Cryptomarketing",
@@ -128,9 +74,9 @@
       "definition": "Modelo donde las promociones son contratos ejecutables, la atribución es verificable y las comisiones se liquidan automáticamente."
     },
     {
-      "term": "Infraestructura de Comercio Verificable",
-      "category": "Modelo",
-      "definition": "Sistema donde cada transacción se registra, encadena, valida por coherencia y se liquida automáticamente."
+      "term": "Deal",
+      "category": "Comercial",
+      "definition": "Acuerdo comercial digital que define producto, condiciones, comisión, duración y reglas de liquidación. En Link4Deal es un contrato ejecutable."
     },
     {
       "term": "DeFi",
@@ -139,22 +85,32 @@
       "definitionEn": "Decentralized Finance. Financial services (lending, trading, insurance) built on blockchain without central intermediaries."
     },
     {
-      "term": "Staking",
-      "category": "Cripto",
-      "definition": "Bloquear cripto en un protocolo para apoyar la red (ej. validación) y ganar recompensas.",
-      "definitionEn": "Locking crypto in a protocol to support the network (e.g. validation) and earn rewards."
-    },
-    {
-      "term": "Pool de liquidez",
-      "category": "Cripto",
-      "definition": "Contrato inteligente que guarda fondos para que los usuarios intercambien tokens (ej. en AMM). Los proveedores de liquidez ganan comisiones.",
-      "definitionEn": "Smart contract that holds funds so users can swap tokens (e.g. in AMMs). Liquidity providers earn fees."
-    },
-    {
-      "term": "APY",
+      "term": "Dinero programable",
       "category": "Financiero",
-      "definition": "Rendimiento porcentual anual. Rendimiento anual estimado de una inversión, incluyendo capitalización.",
-      "definitionEn": "Annual Percentage Yield. Estimated yearly return on an investment, including compounding."
+      "definition": "Valor digital cuyas reglas (pagos, condiciones, liberación de fondos) se ejecutan mediante código en blockchain o en la aplicación, sin depender solo de procesos manuales de un banco. Ejemplo: liquidar automáticamente una comisión cuando el contrato verifica la venta.",
+      "definitionEn": "Digital value whose rules (payments, conditions, fund release) are executed by code on a blockchain or in the app, not only by manual bank workflows. Example: automatically settle a fee when the contract verifies a sale."
+    },
+    {
+      "term": "Escrowed",
+      "category": "Financiero",
+      "definition": "Fondos o activos retenidos en depósito (escrow): permanecen bloqueados en custodia —suelen estar en un contrato inteligente— hasta que se cumplen las condiciones acordadas; entonces se liberan al destinatario. Reduce el riesgo de que una parte cobre sin cumplir.",
+      "definitionEn": "Funds or assets held in escrow: locked in custody—often via smart contract—until agreed conditions are met; then they are released to the recipient. Reduces the risk of one party taking payment without delivering."
+    },
+    {
+      "term": "Estado",
+      "category": "Modelo",
+      "definition": "Condición actual del negocio en un momento dado, como stock, saldo, deuda o comisión acumulada."
+    },
+    {
+      "term": "Evento Comercial",
+      "category": "Operativo",
+      "definition": "Acción económica registrada en el sistema como venta, compra, pago o comisión que modifica el estado del negocio."
+    },
+    {
+      "term": "Fiat",
+      "category": "Financiero",
+      "definition": "Dinero de curso legal emitido por la autoridad monetaria de un país (billetes y monedas; ej. pesos, dólares, euros). Se distingue de las criptomonedas o tokens, que son activos digitales en red.",
+      "definitionEn": "Legal tender issued by a country’s monetary authority (banknotes and coins; e.g. pesos, dollars, euros). Distinct from cryptocurrencies or tokens, which are digital assets on a network."
     },
     {
       "term": "Gas",
@@ -163,10 +119,108 @@
       "definitionEn": "Fee paid to the network (validators/miners) to process a transaction on a blockchain."
     },
     {
+      "term": "Hash",
+      "category": "Infraestructura",
+      "definition": "Código único generado a partir de una transacción que permite verificar integridad y construir trazabilidad."
+    },
+    {
+      "term": "Infraestructura de Comercio Verificable",
+      "category": "Modelo",
+      "definition": "Sistema donde cada transacción se registra, encadena, valida por coherencia y se liquida automáticamente."
+    },
+    {
+      "term": "L4D",
+      "category": "Modelo",
+      "definition": "Flujo económico: movimiento de valor, comisiones y liquidaciones que recorre el ecosistema Link4Deal (deals, promociones y billetera).",
+      "definitionEn": "Economic flow: movement of value, fees and settlements across the Link4Deal ecosystem (deals, promotions and wallet)."
+    },
+    {
+      "term": "Liquidación Automática",
+      "category": "Financiero",
+      "definition": "Proceso mediante el cual el sistema distribuye pagos sin intervención manual una vez validada la transacción."
+    },
+    {
+      "term": "LUXAE y contrato ERC-20 (LXD)",
+      "category": "Token",
+      "definition": "En la app, el token de recompensas y saldos se muestra como LUXAE. El contrato ERC-20 usa el nombre LXD (estándar name). Tu dirección 0x sirve para ese token y para el saldo nativo de gas en la red.",
+      "definitionEn": "In the app, rewards and balances are shown as LUXAE. The ERC-20 contract uses the name LXD (standard name field). Your 0x address holds that token and native gas balance on the network."
+    },
+    {
+      "term": "LXE",
+      "category": "Financiero",
+      "definition": "Colateral / reserva: activo o saldo que respalda operaciones, liquidez o compromisos en el ecosistema.",
+      "definitionEn": "Collateral / reserve: asset or balance that backs operations, liquidity or commitments in the ecosystem."
+    },
+    {
+      "term": "MCP",
+      "category": "IA",
+      "definition": "Model Context Protocol. Interfaz que permite a sistemas de IA interactuar estructuradamente con estados, eventos y contratos del negocio."
+    },
+    {
       "term": "NFT",
       "category": "Cripto",
       "definition": "Token no fungible. Activo digital único en una blockchain, usado a menudo para arte, coleccionables o prueba de propiedad.",
       "definitionEn": "Non-Fungible Token. Unique digital asset on a blockchain, often used for art, collectibles or proof of ownership."
+    },
+    {
+      "term": "Nodo de Negocio",
+      "category": "Infraestructura",
+      "definition": "Unidad económica independiente dentro del ecosistema con historial verificable, wallet, contratos activos y servidor MCP."
+    },
+    {
+      "term": "Pegeed",
+      "category": "Modelo",
+      "definition": "Mecanismo de estabilización definido por promoción y por negocio.\n\nCada negocio genera su propio backing:\n\nValor_negocio = Ventas × Descuento × Redención\n\nA partir de eso puedes construir:\n• Índice global (todo el ecosistema)\n• Índice por negocio\n• Índice por categoría (papelería, restaurantes, etc.)",
+      "definitionEn": "Stabilization mechanism defined per promotion and per business.\n\nEach business generates its own backing:\n\nBusiness_value = Sales × Discount × Redemption\n\nFrom there you can build:\n• Global index (whole ecosystem)\n• Per-business index\n• Per category index (stationery, restaurants, etc.)"
+    },
+    {
+      "term": "Pool de liquidez",
+      "category": "Cripto",
+      "definition": "Contrato inteligente que guarda fondos para que los usuarios intercambien tokens (ej. en AMM). Los proveedores de liquidez ganan comisiones.",
+      "definitionEn": "Smart contract that holds funds so users can swap tokens (e.g. in AMMs). Liquidity providers earn fees."
+    },
+    {
+      "term": "Promoción",
+      "category": "Comercial",
+      "definition": "Oferta publicada por un negocio que permite generar ventas a cambio de comisión. Está vinculada a un smart contract."
+    },
+    {
+      "term": "Referido",
+      "category": "Usuario",
+      "definition": "Persona o agente de IA que comparte un deal y recibe una comisión cuando se concreta la venta."
+    },
+    {
+      "term": "Smart Contract",
+      "category": "Infraestructura",
+      "definition": "Programa que se ejecuta automáticamente cuando se cumplen condiciones específicas, como pagar una comisión tras una venta válida."
+    },
+    {
+      "term": "Staking",
+      "category": "Cripto",
+      "definition": "Bloquear cripto en un protocolo para apoyar la red (ej. validación) y ganar recompensas.",
+      "definitionEn": "Locking crypto in a protocol to support the network (e.g. validation) and earn rewards."
+    },
+    {
+      "term": "Token",
+      "category": "Financiero",
+      "definition": "Activo digital utilizado para liquidar promociones y transacciones dentro del ecosistema. Está denominado en USD y diseñado para estabilidad."
+    },
+    {
+      "term": "USDLXE",
+      "category": "Financiero",
+      "definition": "Unidad estable: referencia de valor pensada para mantener paridad o anclaje frente al dólar (USD) dentro del modelo Link4Deal.",
+      "definitionEn": "Stable unit: value reference designed to maintain parity or peg to the US dollar (USD) within the Link4Deal model."
+    },
+    {
+      "term": "VeToken",
+      "category": "Token",
+      "definition": "Token de tipo «vote escrow»: al bloquear el token base en un contrato recibes un token derivado (p. ej. veToken) que representa derechos de gobernanza, recompensas o peso de voto mientras dura el bloqueo. El diseño concreto depende de cada protocolo.",
+      "definitionEn": "Vote-escrowed style token: locking the base token in a contract yields a derivative (e.g. veToken) representing governance rights, rewards or voting weight for the lock period. Exact design depends on each protocol."
+    },
+    {
+      "term": "Wallet",
+      "category": "Infraestructura",
+      "definition": "Cartera digital dentro de la app que permite recibir comisiones, enviar pagos, ejecutar contratos y firmar transacciones."
     },
     {
       "term": "Yield farming",

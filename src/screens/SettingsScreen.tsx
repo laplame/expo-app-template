@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   Box,
   Text,
@@ -6,16 +6,27 @@ import {
   VStack,
   Pressable,
   HStack,
+  Button,
+  ButtonText,
+  Input,
+  InputField,
 } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
+import { Alert, Keyboard } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSettings, Language, Currency } from '../context/SettingsContext';
+import { TOKEN_SYMBOL } from '../constants/luxToken';
 import { getPreferredMall, setPreferredMall, type PreferredMall } from '../services/storage';
 import { getStoresNearUser } from '../data/nearbyStores';
 
 export default function SettingsScreen() {
-  const { language, currency, setLanguage, setCurrency } = useSettings();
+  const { language, currency, setLanguage, setCurrency, paymentLimitLuxae, setPaymentLimitLuxae } = useSettings();
   const [preferredMall, setPreferredMallState] = useState<PreferredMall | null>(null);
+  const [paymentLimitDraft, setPaymentLimitDraft] = useState(String(paymentLimitLuxae));
+
+  useEffect(() => {
+    setPaymentLimitDraft(String(paymentLimitLuxae));
+  }, [paymentLimitLuxae]);
 
   const storeOptions = useMemo(() => {
     const stores = getStoresNearUser(null, null, 8);
@@ -49,6 +60,14 @@ export default function SettingsScreen() {
     spanish: 'Español',
     usd: 'USD (Dólares)',
     mxn: 'MXN (Pesos mexicanos)',
+    paymentLimitTitle: language === 'es' ? `Límite de pago (${TOKEN_SYMBOL})` : `Payment limit (${TOKEN_SYMBOL})`,
+    paymentLimitHint:
+      language === 'es'
+        ? 'Máximo por operación al usar «Pagar» en el QR de identificación. Si el importe lo supera, se te pedirá ir a Billetera.'
+        : 'Maximum per transaction when using “Pay” on the ID QR. If the amount exceeds it, you will be prompted to open Wallet.',
+    paymentLimitSave: language === 'es' ? 'Guardar límite' : 'Save limit',
+    paymentLimitSaved: language === 'es' ? 'Límite guardado' : 'Limit saved',
+    paymentLimitInvalid: language === 'es' ? 'Introduce un número entero ≥ 1' : 'Enter a whole number ≥ 1',
   };
 
   return (
@@ -139,6 +158,45 @@ export default function SettingsScreen() {
                   {t.mxn}
                 </Text>
               </Pressable>
+            </HStack>
+          </VStack>
+
+          {/* Límite de pago LUXAE */}
+          <VStack space="sm">
+            <Text fontSize="$lg" fontWeight="$bold" color="$textLight900">
+              {t.paymentLimitTitle}
+            </Text>
+            <Text fontSize="$sm" color="$textLight600">
+              {t.paymentLimitHint}
+            </Text>
+            <HStack space="sm" alignItems="center">
+              <Input flex={1} size="md" borderRadius="$lg" borderColor="$borderLight300">
+                <InputField
+                  placeholder="20"
+                  value={paymentLimitDraft}
+                  onChangeText={setPaymentLimitDraft}
+                  keyboardType="number-pad"
+                  returnKeyType="done"
+                  onSubmitEditing={() => Keyboard.dismiss()}
+                />
+              </Input>
+              <Button
+                size="md"
+                bg="#00704A"
+                onPress={async () => {
+                  const n = Math.floor(
+                    parseFloat(String(paymentLimitDraft).trim().replace(',', '.'))
+                  );
+                  if (!Number.isFinite(n) || n < 1) {
+                    Alert.alert(t.title, t.paymentLimitInvalid);
+                    return;
+                  }
+                  await setPaymentLimitLuxae(n);
+                  Alert.alert(t.title, t.paymentLimitSaved, [{ text: 'OK' }]);
+                }}
+              >
+                <ButtonText>{t.paymentLimitSave}</ButtonText>
+              </Button>
             </HStack>
           </VStack>
 

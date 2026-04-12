@@ -34,3 +34,8 @@ yarn-error.*
 
 # typescript
 *.tsbuildinfo
+
+# APKs generados localmente (ver BUILD_APK.md)
+damecodigo_*.apk
+damecodigo-latest.apk
+build-*.apk

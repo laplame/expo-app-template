@@ -33,6 +33,8 @@ import {
   formatBilingualAlertTitle,
 } from '../context/walletDisclosureCopy';
 import { useMetaMaskUnavailable } from '../context/MetaMaskUnavailableContext';
+import { useVerificationAccess } from '../context/VerificationAccessContext';
+import { formatAddressForUi } from '../utils/addressDisplay';
 
 function shortenAddress(addr: string): string {
   if (!addr || addr.length < 12) return addr;
@@ -44,12 +46,8 @@ interface WalletAddressSectionProps {
   onAddressesChange?: (addresses: WalletAddressItem[]) => void;
 }
 
-function evmChainBadge(chain: WalletChain | undefined, language: 'en' | 'es'): string {
-  const c = chain ?? 'ethereum';
-  if (c === 'bitcoin') return 'BTC';
-  if (c === 'polygon') return language === 'es' ? 'Polygon' : 'Polygon';
-  return language === 'es' ? 'Ethereum' : 'Ethereum';
-}
+/** Cadena usada al guardar 0x desde esta pantalla; la UI no nombra la red. */
+const DEFAULT_EVM_IMPORT_CHAIN: WalletChain = 'polygon';
 
 const translations = (language: 'en' | 'es') => ({
   sectionTitle: language === 'es' ? 'Mis direcciones' : 'My addresses',
@@ -57,12 +55,12 @@ const translations = (language: 'en' | 'es') => ({
   importClipboard: language === 'es' ? 'Importar desde portapapeles' : 'Import from clipboard',
   importNetworkHint:
     language === 'es'
-      ? 'Red (para saldo en la app): copia la dirección 0x desde MetaMask.'
-      : 'Network (for in-app balance): copy the 0x address from MetaMask.',
+      ? 'Para el saldo en la app, copia la dirección 0x desde MetaMask.'
+      : 'For in-app balance, copy the 0x address from MetaMask.',
   generateLink4Deal:
     language === 'es'
-      ? `Generar dirección ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) (Polygon)`
-      : `Generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) address (Polygon)`,
+      ? `Generar dirección ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME})`
+      : `Generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) address`,
   addManual: language === 'es' ? 'Añadir dirección manual' : 'Add address manually',
   addButton: language === 'es' ? 'Añadir' : 'Add',
   placeholder: language === 'es' ? '0x...' : '0x...',
@@ -71,7 +69,11 @@ const translations = (language: 'en' | 'es') => ({
   remove: language === 'es' ? 'Eliminar' : 'Remove',
   invalidAddress: language === 'es' ? 'Dirección EVM inválida (0x + 40 caracteres hex).' : 'Invalid EVM address (0x + 40 hex chars).',
   alreadyAdded: language === 'es' ? 'Ya está guardada.' : 'Already saved.',
-  confirmRemove: language === 'es' ? '¿Eliminar esta dirección?' : 'Remove this address?',
+  confirmRemoveTitle: language === 'es' ? '¿Eliminar dirección?' : 'Remove address?',
+  confirmRemoveMessage:
+    language === 'es'
+      ? 'Si quitas esta dirección de la app, puedes perder la visibilidad de fondos asociados y no podrás pagar ni cobrar con ella desde aquí. Asegúrate de tener respaldo de tus claves. ¿Deseas continuar?'
+      : 'Removing this address from the app may make associated funds harder to track here, and you will not be able to pay or receive with it from the app. Ensure you have backed up your keys. Continue?',
   ok: language === 'es' ? 'Aceptar' : 'OK',
   cancel: language === 'es' ? 'Cancelar' : 'Cancel',
   noAddresses: language === 'es' ? 'Aún no hay direcciones. Añade una manualmente.' : 'No addresses yet. Add one manually.',
@@ -84,15 +86,11 @@ const translations = (language: 'en' | 'es') => ({
       : 'Clipboard does not contain a valid 0x address.',
   generating: language === 'es' ? 'Generando...' : 'Generating...',
   link4dealError: language === 'es' ? 'No se pudo crear la billetera.' : 'Could not create wallet.',
-  netEth: language === 'es' ? 'Ethereum' : 'Ethereum',
-  netPolygon: language === 'es' ? 'Polygon' : 'Polygon',
   pasteReading: language === 'es' ? 'Leyendo...' : 'Reading...',
 });
 
 type EvmExtrasProps = {
   language: 'en' | 'es';
-  importEvmChain: 'ethereum' | 'polygon';
-  setImportEvmChain: (c: 'ethereum' | 'polygon') => void;
   onPasteImport: () => void;
   onGenerateLink4Deal: () => void;
   pasteImporting: boolean;
@@ -101,8 +99,6 @@ type EvmExtrasProps = {
 
 function WalletEvmImportBlock({
   language,
-  importEvmChain,
-  setImportEvmChain,
   onPasteImport,
   onGenerateLink4Deal,
   pasteImporting,
@@ -114,32 +110,6 @@ function WalletEvmImportBlock({
       <Text fontSize="$sm" color="$textLight600">
         {t.importNetworkHint}
       </Text>
-      <HStack space="md" alignItems="center">
-        <Pressable
-          onPress={() => setImportEvmChain('ethereum')}
-          p="$2"
-          borderRadius="$md"
-          bg={importEvmChain === 'ethereum' ? '$backgroundLight100' : 'transparent'}
-          borderWidth={1}
-          borderColor={importEvmChain === 'ethereum' ? '#00704A' : '$borderLight300'}
-        >
-          <Text fontSize="$sm" fontWeight="$medium" color={importEvmChain === 'ethereum' ? '#00704A' : '$textLight500'}>
-            {t.netEth}
-          </Text>
-        </Pressable>
-        <Pressable
-          onPress={() => setImportEvmChain('polygon')}
-          p="$2"
-          borderRadius="$md"
-          bg={importEvmChain === 'polygon' ? '$backgroundLight100' : 'transparent'}
-          borderWidth={1}
-          borderColor={importEvmChain === 'polygon' ? '#00704A' : '$borderLight300'}
-        >
-          <Text fontSize="$sm" fontWeight="$medium" color={importEvmChain === 'polygon' ? '#00704A' : '$textLight500'}>
-            {t.netPolygon}
-          </Text>
-        </Pressable>
-      </HStack>
       <Button
         size="sm"
         variant="outline"
@@ -171,10 +141,10 @@ function WalletAddressSectionManualOnly({
   language,
   onAddressesChange,
 }: WalletAddressSectionProps) {
+  const { revealWalletAddresses } = useVerificationAccess();
   const [addresses, setAddresses] = useState<WalletAddressItem[]>([]);
   const [manualAddress, setManualAddress] = useState('');
   const [adding, setAdding] = useState(false);
-  const [importEvmChain, setImportEvmChain] = useState<'ethereum' | 'polygon'>('ethereum');
   const [generating, setGenerating] = useState(false);
   const [pasteImporting, setPasteImporting] = useState(false);
   const t = translations(language);
@@ -199,7 +169,7 @@ function WalletAddressSectionManualOnly({
         return;
       }
       const label = language === 'es' ? 'Importado (MetaMask)' : 'Imported (MetaMask)';
-      const added = await addWalletAddress(trimmed, 'manual', label, importEvmChain);
+      const added = await addWalletAddress(trimmed, 'manual', label, DEFAULT_EVM_IMPORT_CHAIN);
       if (added) {
         await loadAddresses();
       } else {
@@ -208,7 +178,7 @@ function WalletAddressSectionManualOnly({
     } finally {
       setPasteImporting(false);
     }
-  }, [importEvmChain, t, language, loadAddresses]);
+  }, [t, language, loadAddresses]);
 
   const runGeneratePolygonWallet = useCallback(async () => {
     setGenerating(true);
@@ -264,7 +234,7 @@ function WalletAddressSectionManualOnly({
     }
     setAdding(true);
     try {
-      const added = await addWalletAddress(trimmed, 'manual', undefined, importEvmChain);
+      const added = await addWalletAddress(trimmed, 'manual', undefined, DEFAULT_EVM_IMPORT_CHAIN);
       if (added) {
         setManualAddress('');
         await loadAddresses();
@@ -274,7 +244,7 @@ function WalletAddressSectionManualOnly({
     } finally {
       setAdding(false);
     }
-  }, [manualAddress, importEvmChain, t, loadAddresses]);
+  }, [manualAddress, t, loadAddresses]);
 
   const handleSetDefault = useCallback(
     async (id: string) => {
@@ -286,7 +256,7 @@ function WalletAddressSectionManualOnly({
 
   const handleRemove = useCallback(
     (item: WalletAddressItem) => {
-      Alert.alert(t.remove, t.confirmRemove, [
+      Alert.alert(t.confirmRemoveTitle, t.confirmRemoveMessage, [
         { text: t.cancel, style: 'cancel' },
         {
           text: t.remove,
@@ -306,8 +276,8 @@ function WalletAddressSectionManualOnly({
 
   const noAddressesManual =
     language === 'es'
-      ? `Aún no hay direcciones. Importa desde MetaMask, genera ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) en Polygon o escribe 0x.`
-      : `No addresses yet. Import from MetaMask, generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) on Polygon, or type 0x.`;
+      ? `Aún no hay direcciones. Importa desde MetaMask, genera ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) o escribe 0x.`
+      : `No addresses yet. Import from MetaMask, generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}), or type 0x.`;
 
   return (
     <VStack space="md">
@@ -316,8 +286,6 @@ function WalletAddressSectionManualOnly({
       </Text>
       <WalletEvmImportBlock
         language={language}
-        importEvmChain={importEvmChain}
-        setImportEvmChain={setImportEvmChain}
         onPasteImport={handlePasteImport}
         onGenerateLink4Deal={handleGenerateLink4Deal}
         pasteImporting={pasteImporting}
@@ -362,11 +330,8 @@ function WalletAddressSectionManualOnly({
                   <Text fontSize="$sm" fontWeight="$medium" color="$textLight900" numberOfLines={1}>
                     {item.label || shortenAddress(item.address)}
                   </Text>
-                  <Text fontSize="$xs" color="$textLight600" numberOfLines={1}>
-                    {evmChainBadge(item.chain ?? 'ethereum', language)}
-                  </Text>
                   <Text fontSize="$xs" color="$textLight500" numberOfLines={1}>
-                    {item.address}
+                    {formatAddressForUi(item.address, revealWalletAddresses)}
                   </Text>
                   {item.isDefault && (
                     <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
@@ -400,12 +365,12 @@ function WalletAddressSectionWithMetaMask({
   language,
   onAddressesChange,
 }: WalletAddressSectionProps) {
+  const { revealWalletAddresses } = useVerificationAccess();
   const [addresses, setAddresses] = useState<WalletAddressItem[]>([]);
   const [manualAddress, setManualAddress] = useState('');
   const [adding, setAdding] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [sdkError, setSdkError] = useState<string | null>(null);
-  const [importEvmChain, setImportEvmChain] = useState<'ethereum' | 'polygon'>('ethereum');
   const [generating, setGenerating] = useState(false);
   const [pasteImporting, setPasteImporting] = useState(false);
 
@@ -456,7 +421,7 @@ function WalletAddressSectionWithMetaMask({
         return;
       }
       const label = language === 'es' ? 'Importado (MetaMask)' : 'Imported (MetaMask)';
-      const added = await addWalletAddress(trimmed, 'manual', label, importEvmChain);
+      const added = await addWalletAddress(trimmed, 'manual', label, DEFAULT_EVM_IMPORT_CHAIN);
       if (added) {
         await loadAddresses();
       } else {
@@ -465,7 +430,7 @@ function WalletAddressSectionWithMetaMask({
     } finally {
       setPasteImporting(false);
     }
-  }, [importEvmChain, t, language, loadAddresses]);
+  }, [t, language, loadAddresses]);
 
   const runGeneratePolygonWallet = useCallback(async () => {
     setGenerating(true);
@@ -521,7 +486,7 @@ function WalletAddressSectionWithMetaMask({
     }
     setAdding(true);
     try {
-      const added = await addWalletAddress(trimmed, 'manual', undefined, importEvmChain);
+      const added = await addWalletAddress(trimmed, 'manual', undefined, DEFAULT_EVM_IMPORT_CHAIN);
       if (added) {
         setManualAddress('');
         await loadAddresses();
@@ -531,7 +496,7 @@ function WalletAddressSectionWithMetaMask({
     } finally {
       setAdding(false);
     }
-  }, [manualAddress, importEvmChain, t, loadAddresses]);
+  }, [manualAddress, t, loadAddresses]);
 
   const handleSetDefault = useCallback(
     async (id: string) => {
@@ -543,7 +508,7 @@ function WalletAddressSectionWithMetaMask({
 
   const handleRemove = useCallback(
     (item: WalletAddressItem) => {
-      Alert.alert(t.remove, t.confirmRemove, [
+      Alert.alert(t.confirmRemoveTitle, t.confirmRemoveMessage, [
         { text: t.cancel, style: 'cancel' },
         {
           text: t.remove,
@@ -563,8 +528,8 @@ function WalletAddressSectionWithMetaMask({
 
   const noAddressesText =
     language === 'es'
-      ? `Aún no hay direcciones. Conecta MetaMask, importa desde el portapapeles, genera ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) (Polygon) o escribe 0x.`
-      : `No addresses yet. Connect MetaMask, import from clipboard, generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) (Polygon), or type 0x.`;
+      ? `Aún no hay direcciones. Conecta MetaMask, importa desde el portapapeles, genera ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) o escribe 0x.`
+      : `No addresses yet. Connect MetaMask, import from clipboard, generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}), or type 0x.`;
 
   return (
     <VStack space="md">
@@ -586,8 +551,6 @@ function WalletAddressSectionWithMetaMask({
       )}
       <WalletEvmImportBlock
         language={language}
-        importEvmChain={importEvmChain}
-        setImportEvmChain={setImportEvmChain}
         onPasteImport={handlePasteImport}
         onGenerateLink4Deal={handleGenerateLink4Deal}
         pasteImporting={pasteImporting}
@@ -632,11 +595,8 @@ function WalletAddressSectionWithMetaMask({
                   <Text fontSize="$sm" fontWeight="$medium" color="$textLight900" numberOfLines={1}>
                     {item.label || shortenAddress(item.address)}
                   </Text>
-                  <Text fontSize="$xs" color="$textLight600" numberOfLines={1}>
-                    {evmChainBadge(item.chain ?? 'ethereum', language)}
-                  </Text>
                   <Text fontSize="$xs" color="$textLight500" numberOfLines={1}>
-                    {item.address}
+                    {formatAddressForUi(item.address, revealWalletAddresses)}
                   </Text>
                   {item.isDefault && (
                     <Text fontSize="$xs" color="#00704A" fontWeight="$medium">

@@ -16,6 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useNavigation } from '@react-navigation/native';
 import { useSettings } from '../context/SettingsContext';
 import { setQuickProfile } from '../services/storage';
+import { createLink4DealPolygonWallet } from '../services/link4dealWallet';
 
 export default function QuickRegisterScreen() {
   const navigation = useNavigation();
@@ -54,6 +55,11 @@ export default function QuickRegisterScreen() {
     }
     await setQuickProfile({ name: n, age: a, phone: p });
     setUserName(n);
+    try {
+      await createLink4DealPolygonWallet();
+    } catch {
+      // Ya existe o error de red; no bloquear el alta
+    }
     (navigation as any).navigate('Home');
   };
 

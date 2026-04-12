@@ -1,8 +1,16 @@
 /**
  * API de influencers (Gemini + backend).
  * Ref: assets/docs/buscarInfluencers.md
- * Convención: EXPO_PUBLIC_API_URL incluye /api (ej. https://damecodigo.com/api o http://localhost:3000/api).
+ *
+ * Base URL (igual que en commits previos del repo): `EXPO_PUBLIC_API_URL` sin barra final,
+ * o por defecto `https://www.damecodigo.com/api`. Rutas: `/influencers`, `/influencers/avatar`,
+ * `/analyze-profile-image`. No se ha cambiado la construcción de URLs; un 502 viene del
+ * servidor/proxy, no de esta capa.
+ *
+ * Convención: EXPO_PUBLIC_API_URL debe incluir `/api` al final (ej. https://damecodigo.com/api).
  */
+import { formatHttpApiError } from '../utils/formatHttpApiError';
+
 function getApiBase(): string {
   const env = process.env.EXPO_PUBLIC_API_URL;
   if (env) return env.endsWith('/') ? env.slice(0, -1) : env;
@@ -121,9 +129,10 @@ export async function uploadInfluencerAvatar(
     const success = (json as any).success === true;
     const avatarUrl = (json as any).data?.avatarUrl;
     if (!res.ok) {
+      const fallback = (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`;
       return {
         ok: false,
-        error: (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`,
+        error: formatHttpApiError(res.status, fallback),
       };
     }
     if (!success || !avatarUrl) {
@@ -176,12 +185,11 @@ export async function analyzeProfileImage(
     const data = (json as any).data;
 
     if (!res.ok) {
+      const fallback =
+        (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`;
       return {
         ok: false,
-        error:
-          (json as any).message ??
-          (json as any).error ??
-          `HTTP ${res.status}`,
+        error: formatHttpApiError(res.status, fallback),
       };
     }
     if (!success || !data) {
@@ -218,9 +226,10 @@ export async function getAllInfluencers(params?: {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
+      const fallback = (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`;
       return {
         ok: false,
-        error: (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`,
+        error: formatHttpApiError(res.status, fallback),
       };
     }
     const data = (json as any).data;
@@ -285,10 +294,11 @@ export async function searchInfluencers(params: {
       return { ok: true, influencers: [] };
     }
     if (!res.ok) {
+      const fallback =
+        (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`;
       return {
         ok: false,
-        error:
-          (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`,
+        error: formatHttpApiError(res.status, fallback),
       };
     }
 
@@ -304,10 +314,35 @@ export async function searchInfluencers(params: {
   }
 }
 
-/** Crea influencer (POST /api/influencers). Ref: buscarInfluencers.md §4 */
+/** Interpreta cuerpos variados de POST /influencers (data, influencer o documento en raíz). */
+export function parseInfluencerCreateBody(json: unknown): InfluencerDoc | undefined {
+  if (!json || typeof json !== 'object') return undefined;
+  const j = json as Record<string, unknown>;
+  let raw: unknown = j.data ?? j.influencer;
+  if (raw == null && (j._id != null || j.id != null)) raw = j;
+  if (!raw || typeof raw !== 'object') return undefined;
+  const doc = { ...(raw as InfluencerDoc) };
+  if (!doc.displayName && typeof (doc as { name?: string }).name === 'string') {
+    (doc as InfluencerDoc).displayName = (doc as { name: string }).name;
+  }
+  return doc;
+}
+
+function isLikelyDuplicateInfluencerError(message: string, status: number): boolean {
+  if (status === 409 || status === 422) return true;
+  const m = String(message || '').toLowerCase();
+  return /duplicate|already exist|ya existe|e11000|already registered|registrado|unique/i.test(m);
+}
+
+/**
+ * Crea influencer (POST /api/influencers). Ref: buscarInfluencers.md §4
+ *
+ * Respuesta esperada (web): `{ success: true, data: { ... } }`. Se mantiene compatibilidad
+ * con ese contrato; además se aceptan variantes (documento en raíz, `influencer`, etc.).
+ */
 export async function createInfluencer(
   payload: CreateInfluencerPayload
-): Promise<{ ok: boolean; data?: InfluencerDoc; error?: string }> {
+): Promise<{ ok: boolean; data?: InfluencerDoc; error?: string; duplicate?: boolean }> {
   try {
     const body = {
       displayName: payload.displayName.trim(),
@@ -331,23 +366,51 @@ export async function createInfluencer(
       body: JSON.stringify(body),
     });
     const json = await res.json().catch(() => ({}));
-    const success = (json as any).success === true;
-    const data = (json as any).data;
+    const msg =
+      (json as any).message ?? (json as any).error ?? (typeof (json as any).msg === 'string' ? (json as any).msg : '');
+    const errText = msg ? String(msg) : `HTTP ${res.status}`;
 
     if (!res.ok) {
+      const friendly = formatHttpApiError(res.status, errText);
       return {
         ok: false,
-        error:
-          (json as any).message ?? (json as any).error ?? `HTTP ${res.status}`,
+        error: friendly,
+        duplicate: isLikelyDuplicateInfluencerError(errText, res.status),
       };
     }
-    if (!success) {
+
+    // 1) Formato flexible (raíz / data / influencer). 2) Mismo criterio que la versión previa: json.data
+    const data =
+      parseInfluencerCreateBody(json) ?? ((json as any).data != null && typeof (json as any).data === 'object'
+        ? ({ ...(json as any).data } as InfluencerDoc)
+        : undefined);
+    if (data && !data.displayName && typeof (data as { name?: string }).name === 'string') {
+      data.displayName = (data as { name: string }).name;
+    }
+
+    const successFlag = (json as any).success;
+    // Como la versión previa: success === false implica fallo (no devolver documento aunque venga algo raro en data)
+    if (successFlag === false) {
       return {
         ok: false,
-        error: (json as any).message ?? 'Creación fallida',
+        error: (json as any).message ?? (errText || 'Creación fallida'),
+        duplicate: isLikelyDuplicateInfluencerError(errText, res.status),
       };
     }
-    return { ok: true, data: data as InfluencerDoc };
+    if (data) {
+      return { ok: true, data };
+    }
+    // Versión previa exigía success === true; aquí success true sin cuerpo parseable
+    if (successFlag === true) {
+      return {
+        ok: false,
+        error: errText || 'La API no devolvió los datos del influencer',
+      };
+    }
+    return {
+      ok: false,
+      error: (json as any).message ?? (errText || 'Creación fallida'),
+    };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Network error' };
   }

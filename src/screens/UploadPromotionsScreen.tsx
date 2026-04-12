@@ -4,7 +4,8 @@
  * Si falta algo (error, validación), se ofrece redirigir al sitio web.
  */
 import React, { useState, useMemo } from 'react';
-import { ScrollView, Alert, Linking, Platform, ActionSheetIOS, Pressable as RNPressable, Image } from 'react-native';
+import { ScrollView, Alert, Linking, Platform, ActionSheetIOS, Pressable as RNPressable, Image, Switch, ActivityIndicator } from 'react-native';
+import * as Location from 'expo-location';
 
 let DateTimePicker: React.ComponentType<any> | null = null;
 try {
@@ -25,12 +26,13 @@ import {
   FormControlLabel,
   FormControlLabelText,
   HStack,
+  Pressable,
 } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettings } from '../context/SettingsContext';
-import { useWalletBalance } from '../context/WalletBalanceContext';
+import { useWalletBalance, USD_TO_MXN } from '../context/WalletBalanceContext';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
 import {
   postPromotion,
@@ -40,12 +42,41 @@ import {
   SITE_PROMO_URLS,
   AnalyzeImageData,
 } from '../services/promotionsApi';
+import { logPromotionDebug, logPromotionWarn } from '../utils/uploadPromotionLog';
 
 function formatDateYMD(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function toUsd(amount: number, c: 'USD' | 'MXN'): number {
+  if (!Number.isFinite(amount)) return 0;
+  return c === 'MXN' ? amount / USD_TO_MXN : amount;
+}
+
+/** Valor promocional en USD para vista previa (1 token ≈ 1 USD). */
+function computeTokenValueUsd(
+  offerType: string,
+  orig: number,
+  curr: number,
+  cashbackRaw: number,
+  c: 'USD' | 'MXN'
+): number {
+  const o = toUsd(orig, c);
+  const cur = toUsd(curr, c);
+  switch (offerType) {
+    case 'cashback_fixed':
+      return Math.max(0, toUsd(cashbackRaw, c));
+    case 'cashback_percentage':
+      return Math.max(0, cur * ((Number.isFinite(cashbackRaw) ? cashbackRaw : 0) / 100));
+    case 'bogo':
+      return Math.max(0, o - cur);
+    case 'percentage':
+    default:
+      return Math.max(0, o - cur);
+  }
 }
 
 /** Categorías según upload_promo.md §4 (enum Gemini) */
@@ -105,8 +136,16 @@ export default function UploadPromotionsScreen() {
     address: '',
     validFrom: formatDateYMD(today),
     validUntil: formatDateYMD(defaultUntil),
+    gpsActivation: false,
+    storeLatitude: '',
+    storeLongitude: '',
+    locationRadiusMeters: '500',
+    promoCurrency: (currency === 'MXN' ? 'MXN' : 'USD') as 'USD' | 'MXN',
+    promotionMode: 'qr' as 'qr' | 'redirect',
+    redirectToUrl: '',
   });
   const [pricesFromIa, setPricesFromIa] = useState(false);
+  const [fetchingGps, setFetchingGps] = useState(false);
   const [isPermanent, setIsPermanent] = useState(false);
   const [showPickerFrom, setShowPickerFrom] = useState(false);
   const [showPickerUntil, setShowPickerUntil] = useState(false);
@@ -162,10 +201,84 @@ export default function UploadPromotionsScreen() {
       missingFields: language === 'es' ? 'Campos requeridos faltantes' : 'Missing required fields',
       earnedTokens:
         language === 'es' ? `Has ganado 10 ${TOKEN_SYMBOL}.` : `You've earned 10 ${TOKEN_SYMBOL}.`,
+      promotionSubmittedTitle: language === 'es' ? 'Promoción enviada' : 'Promotion submitted',
+      pendingVerificationNotice:
+        language === 'es'
+          ? 'Tu promoción quedó registrada y debe ser verificada antes de mostrarse como activa a los usuarios. Te avisaremos o revisa el estado en el detalle cuando esté aprobada.'
+          : 'Your promotion was saved and must be verified before it appears as active to users. You will be notified, or check the detail page for approval status.',
+      reviewBeforePublish:
+        language === 'es'
+          ? 'Al publicar, la promoción se envía al servidor en estado borrador y queda pendiente de verificación del equipo.'
+          : 'When you publish, the promotion is sent to the server as draft and stays pending team review.',
       pricesInUsd: language === 'es' ? '(precios IA en USD)' : '(AI prices in USD)',
+      gpsSectionTitle: language === 'es' ? 'Activación por ubicación (GPS)' : 'Location activation (GPS)',
+      gpsSectionHint:
+        language === 'es'
+          ? 'El usuario deberá estar cerca del punto de la tienda para obtener el cupón (validación al solicitar el cupón).'
+          : 'The user must be near the store point to get the coupon (validated when requesting the coupon).',
+      fieldLatitude: language === 'es' ? 'Latitud (WGS84)' : 'Latitude (WGS84)',
+      fieldLongitude: language === 'es' ? 'Longitud (WGS84)' : 'Longitude (WGS84)',
+      fieldRadiusM: language === 'es' ? 'Radio permitido (metros)' : 'Allowed radius (meters)',
+      radiusHint: language === 'es' ? 'Entre 50 m y 50 km.' : 'Between 50 m and 50 km.',
+      getLocationFromDevice: language === 'es' ? 'Obtener del dispositivo' : 'Use device location',
+      locationDenied: language === 'es' ? 'Ubicación denegada. Activa el permiso en ajustes.' : 'Location denied. Enable permission in settings.',
+      locationError: language === 'es' ? 'No se pudo obtener la ubicación.' : 'Could not get location.',
+      gpsValidationError:
+        language === 'es'
+          ? 'Con GPS activado, indica latitud, longitud válidas y un radio entre 50 y 50000 m.'
+          : 'With GPS on, enter valid latitude, longitude and a radius between 50 and 50000 m.',
+      sectionPromoKind: language === 'es' ? 'Tipo de promoción' : 'Promotion type',
+      sectionPromoKindHint:
+        language === 'es'
+          ? 'Cupón con QR: código para canjear en tienda. Quick promotion: redirige a comprar (ej. Amazon).'
+          : 'QR coupon: code to redeem in store. Quick promotion: redirects to buy (e.g. Amazon).',
+      modeQr: language === 'es' ? 'Cupón con QR' : 'QR coupon',
+      modeRedirect: language === 'es' ? 'Quick promotion (redirección)' : 'Quick promotion (redirect)',
+      fieldRedirectUrl: language === 'es' ? 'URL de destino (opcional)' : 'Destination URL (optional)',
+      sectionPrices: language === 'es' ? 'Precios' : 'Prices',
+      fieldProductCurrency: language === 'es' ? 'Moneda del producto' : 'Product currency',
+      currencyUsd: language === 'es' ? 'USD (dólares)' : 'USD',
+      currencyMxn: language === 'es' ? 'MXN (pesos)' : 'MXN',
+      tokensUsdNote:
+        language === 'es'
+          ? `Los ${TOKEN_SYMBOL} se expresan en USD (1 ${TOKEN_SYMBOL} ≈ 1 USD). Si eliges MXN, el servidor convierte al guardar.`
+          : `${TOKEN_SYMBOL} are expressed in USD (1 ${TOKEN_SYMBOL} ≈ 1 USD). If you choose MXN, the server converts on save.`,
+      discountLabel: language === 'es' ? 'Descuento' : 'Discount',
+      sectionOfferTokens: language === 'es' ? 'Tipo de promoción y valor en tokens' : 'Offer type and token value',
+      sectionOfferTokensHint:
+        language === 'es'
+          ? `El tipo define el valor promocional en USD. X ${TOKEN_SYMBOL} ≈ X USD (pasivo medible).`
+          : `The type defines promotional value in USD. X ${TOKEN_SYMBOL} ≈ X USD.`,
+      tokenPreviewTitle: language === 'es' ? 'Vista previa de valor en tokens' : 'Token value preview',
+      tokenPreviewFoot:
+        language === 'es'
+          ? 'Unidad del contrato (pasivo medible). Siempre referida a USD.'
+          : 'Contract unit (measurable liability). Always in USD terms.',
+      offerPct: language === 'es' ? 'Descuento %' : 'Discount %',
+      offerBogo: language === 'es' ? '2x1 (BOGO)' : 'BOGO',
+      offerCbFixed: language === 'es' ? 'Cashback fijo' : 'Fixed cashback',
+      offerCbPct: language === 'es' ? 'Cashback % sobre oferta' : 'Cashback % on deal',
     }),
     [language]
   );
+
+  const pricePreview = useMemo(() => {
+    const orig = parseFloat(String(form.originalPrice).replace(',', '.'));
+    const curr = parseFloat(String(form.currentPrice).replace(',', '.'));
+    const cb = parseFloat(String(form.cashbackValue).replace(',', '.'));
+    const discountPct =
+      orig > 0 && Number.isFinite(orig) && Number.isFinite(curr)
+        ? Math.round(((orig - curr) / orig) * 100)
+        : 0;
+    const tokenUsd = computeTokenValueUsd(
+      form.offerType,
+      Number.isFinite(orig) ? orig : 0,
+      Number.isFinite(curr) ? curr : 0,
+      Number.isFinite(cb) ? cb : 0,
+      form.promoCurrency
+    );
+    return { discountPct, tokenUsd };
+  }, [form.originalPrice, form.currentPrice, form.offerType, form.cashbackValue, form.promoCurrency]);
 
   /** Redirige al sitio cuando falta algo (ref: upload_promo.md) */
   const openWebForm = () => {
@@ -256,6 +369,30 @@ export default function UploadPromotionsScreen() {
     }
   };
 
+  const fetchLocationFromDevice = async () => {
+    setFetchingGps(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(t.ok, t.locationDenied);
+        return;
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const lat = loc.coords.latitude;
+      const lng = loc.coords.longitude;
+      setForm((f) => ({
+        ...f,
+        storeLatitude: lat.toFixed(6),
+        storeLongitude: lng.toFixed(6),
+        gpsActivation: true,
+      }));
+    } catch (e) {
+      Alert.alert(t.ok, (e as Error)?.message ?? t.locationError);
+    } finally {
+      setFetchingGps(false);
+    }
+  };
+
   const showImageSourcePicker = () => {
     if (Platform.OS === 'ios') {
       ActionSheetIOS.showActionSheetWithOptions(
@@ -281,6 +418,9 @@ export default function UploadPromotionsScreen() {
     );
   };
 
+  const MIN_GPS_RADIUS_M = 50;
+  const MAX_GPS_RADIUS_M = 50_000;
+
   /** Validación según upload_promo.md §7: solo title obligatorio */
   const buildPayload = (currentForm: typeof form): PromotionPayload | null => {
     const title = (currentForm.title ?? '').trim();
@@ -294,12 +434,36 @@ export default function UploadPromotionsScreen() {
     const curr = Number(currentForm.currentPrice);
     const discount =
       orig > 0 ? Math.round(((orig - curr) / orig) * 100) : 0;
+
+    const gpsOn = !!currentForm.gpsActivation;
+    const latStr = String(currentForm.storeLatitude ?? '').trim().replace(',', '.');
+    const lngStr = String(currentForm.storeLongitude ?? '').trim().replace(',', '.');
+    const lat = parseFloat(latStr);
+    const lng = parseFloat(lngStr);
+    const radiusParsed = parseInt(String(currentForm.locationRadiusMeters ?? '').trim(), 10);
+
+    let coordinates: { lat: number; lng: number } | null = null;
+    let locationRadiusMeters: number | undefined;
+
+    if (gpsOn) {
+      const latOk = Number.isFinite(lat) && lat >= -90 && lat <= 90;
+      const lngOk = Number.isFinite(lng) && lng >= -180 && lng <= 180;
+      const radiusOk =
+        Number.isFinite(radiusParsed) && radiusParsed >= MIN_GPS_RADIUS_M && radiusParsed <= MAX_GPS_RADIUS_M;
+      if (!latOk || !lngOk || !radiusOk) {
+        setError(t.gpsValidationError);
+        return null;
+      }
+      coordinates = { lat, lng };
+      locationRadiusMeters = radiusParsed;
+    }
+
     const storeLocation: PromotionStoreLocation = {
       address: (currentForm.address ?? '').trim() || undefined,
       city: (currentForm.city ?? '').trim() || undefined,
       state: (currentForm.state ?? '').trim() || undefined,
       country: (currentForm.country ?? '').trim() || undefined,
-      coordinates: null,
+      coordinates,
     };
     const validFromStr = (currentForm.validFrom ?? '').trim();
     const validUntilStr = (currentForm.validUntil ?? '').trim();
@@ -326,7 +490,7 @@ export default function UploadPromotionsScreen() {
       category: (currentForm.category ?? '').trim() || 'other',
       originalPrice: isNaN(orig) ? 0 : orig,
       currentPrice: isNaN(curr) ? 0 : curr,
-      currency: currency,
+      currency: currentForm.promoCurrency,
       discountPercentage: discount,
       offerType,
       cashbackValue: !isNaN(cashback) ? cashback : undefined,
@@ -336,68 +500,107 @@ export default function UploadPromotionsScreen() {
       isPhysicalStore: false,
       validFrom,
       validUntil,
-      status: 'active',
+      /** Recibida en servidor; visible en listados públicos tras revisión (draft / moderación). */
+      status: 'draft',
+      gpsActivationEnabled: gpsOn,
+      locationRadiusMeters,
+      redirectInsteadOfQr: currentForm.promotionMode === 'redirect',
+      redirectToUrl:
+        currentForm.promotionMode === 'redirect'
+          ? (currentForm.redirectToUrl ?? '').trim() || undefined
+          : undefined,
     };
   };
 
   const handleSubmit = async () => {
     setError(null);
+    logPromotionDebug('UploadPromotionsScreen:submit start', {
+      imageCount: images.length,
+      promotionMode: form.promotionMode,
+      gpsActivation: form.gpsActivation,
+    });
     const payload = buildPayload(form);
-    if (!payload) return;
+    if (!payload) {
+      logPromotionWarn('UploadPromotionsScreen:buildPayload returned null (validation)');
+      return;
+    }
     setLoading(true);
-    const result = await postPromotion(
-      payload,
-      images.length > 0 ? images : undefined
-    );
-    setLoading(false);
-    if (result.ok) {
-      setSuccess(true);
-      setPricesFromIa(false);
-      await addLuxaeBalance(10);
-      const promoId = (result.data as any)?.id as string | undefined;
-      setForm({
-        title: '',
-        description: '',
-        productName: '',
-        brand: '',
-        category: 'other',
-        originalPrice: '',
-        currentPrice: '',
-        offerType: 'percentage',
-        cashbackValue: '',
-        termsAndConditions: '',
-        storeName: '',
-        city: '',
-        state: '',
-        country: language === 'es' ? 'México' : 'Mexico',
-        address: '',
-        validFrom: formatDateYMD(new Date()),
-        validUntil: formatDateYMD(defaultUntil),
+    try {
+      const result = await postPromotion(
+        payload,
+        images.length > 0 ? images : undefined
+      );
+      logPromotionDebug('UploadPromotionsScreen:postPromotion result', {
+        ok: result.ok,
+        error: result.ok ? undefined : result.error,
+        hasData: result.ok && result.data != null,
       });
-      setIsPermanent(false);
-      setImages([]);
-      const detailUrl = promoId ? SITE_PROMO_URLS.promotionDetail(promoId) : null;
-      Alert.alert(
-        t.success,
-        t.earnedTokens + (detailUrl ? `\n\n${language === 'es' ? '¿Ver la promoción?' : 'View promotion?'}` : ''),
-        detailUrl
-          ? [
-              { text: t.ok, style: 'cancel' },
-              { text: language === 'es' ? 'Ver detalle' : 'View detail', onPress: () => Linking.openURL(detailUrl) },
-            ]
-          : [{ text: t.ok }]
-      );
-    } else {
-      const errMsg = result.error ?? 'Error';
-      setError(errMsg);
-      Alert.alert(
-        t.missingFields,
-        `${errMsg}\n\n${t.errorFallback}`,
-        [
-          { text: t.ok, style: 'cancel' },
-          { text: t.openWebForm, onPress: openWebForm },
-        ]
-      );
+      if (result.ok) {
+        setSuccess(true);
+        setPricesFromIa(false);
+        await addLuxaeBalance(10);
+        const promoId = (result.data as any)?.id as string | undefined;
+        setForm({
+          title: '',
+          description: '',
+          productName: '',
+          brand: '',
+          category: 'other',
+          originalPrice: '',
+          currentPrice: '',
+          offerType: 'percentage',
+          cashbackValue: '',
+          termsAndConditions: '',
+          storeName: '',
+          city: '',
+          state: '',
+          country: language === 'es' ? 'México' : 'Mexico',
+          address: '',
+          validFrom: formatDateYMD(new Date()),
+          validUntil: formatDateYMD(defaultUntil),
+          gpsActivation: false,
+          storeLatitude: '',
+          storeLongitude: '',
+          locationRadiusMeters: '500',
+          promoCurrency: (currency === 'MXN' ? 'MXN' : 'USD') as 'USD' | 'MXN',
+          promotionMode: 'qr',
+          redirectToUrl: '',
+        });
+        setIsPermanent(false);
+        setImages([]);
+        const detailUrl = promoId ? SITE_PROMO_URLS.promotionDetail(promoId) : null;
+        const bodyMessage =
+          `${t.earnedTokens}\n\n${t.pendingVerificationNotice}` +
+          (detailUrl ? `\n\n${language === 'es' ? '¿Abrir el detalle de la promoción?' : 'Open promotion details?'}` : '');
+        Alert.alert(
+          t.promotionSubmittedTitle,
+          bodyMessage,
+          detailUrl
+            ? [
+                { text: t.ok, style: 'cancel' },
+                { text: language === 'es' ? 'Ver detalle' : 'View detail', onPress: () => Linking.openURL(detailUrl) },
+              ]
+            : [{ text: t.ok }]
+        );
+      } else {
+        const errMsg = result.error ?? 'Error';
+        logPromotionWarn('UploadPromotionsScreen:submit failed', { errMsg });
+        setError(errMsg);
+        Alert.alert(
+          t.missingFields,
+          `${errMsg}\n\n${t.errorFallback}`,
+          [
+            { text: t.ok, style: 'cancel' },
+            { text: t.openWebForm, onPress: openWebForm },
+          ]
+        );
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      logPromotionWarn('UploadPromotionsScreen:submit exception', { message: msg });
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -526,6 +729,209 @@ export default function UploadPromotionsScreen() {
               <Text fontSize="$sm" color="$textLight600">{t.step2Subtitle}</Text>
             </VStack>
 
+            {/* Tipo de promoción: QR vs redirección (como en web) */}
+            <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="$backgroundLight50">
+              <HStack space="sm" alignItems="center" mb="$2">
+                <Text fontSize="$lg">🏷️</Text>
+                <Text fontSize="$md" fontWeight="$bold" color="$textLight900">
+                  {t.sectionPromoKind}
+                </Text>
+              </HStack>
+              <Text fontSize="$xs" color="$textLight600" mb="$3">
+                {t.sectionPromoKindHint}
+              </Text>
+              <VStack space="sm">
+                <Pressable
+                  onPress={() => setForm((f) => ({ ...f, promotionMode: 'qr' }))}
+                  borderWidth={2}
+                  borderColor={form.promotionMode === 'qr' ? '#00704A' : '$borderLight300'}
+                  borderRadius="$md"
+                  p="$3"
+                  bg={form.promotionMode === 'qr' ? 'rgba(0,112,74,0.08)' : '$white'}
+                >
+                  <HStack space="md" alignItems="center">
+                    <Text fontSize="$xl">📱</Text>
+                    <Text fontSize="$sm" fontWeight="$semibold" color="$textLight900" flex={1}>
+                      {t.modeQr}
+                    </Text>
+                    {form.promotionMode === 'qr' ? <Text color="#00704A">✓</Text> : null}
+                  </HStack>
+                </Pressable>
+                <Pressable
+                  onPress={() => setForm((f) => ({ ...f, promotionMode: 'redirect' }))}
+                  borderWidth={2}
+                  borderColor={form.promotionMode === 'redirect' ? '#00704A' : '$borderLight300'}
+                  borderRadius="$md"
+                  p="$3"
+                  bg={form.promotionMode === 'redirect' ? 'rgba(0,112,74,0.08)' : '$white'}
+                >
+                  <HStack space="md" alignItems="center">
+                    <Text fontSize="$xl">🔗</Text>
+                    <Text fontSize="$sm" fontWeight="$semibold" color="$textLight900" flex={1}>
+                      {t.modeRedirect}
+                    </Text>
+                    {form.promotionMode === 'redirect' ? <Text color="#00704A">✓</Text> : null}
+                  </HStack>
+                </Pressable>
+              </VStack>
+              {form.promotionMode === 'redirect' ? (
+                <FormControl mt="$3">
+                  <FormControlLabel>
+                    <FormControlLabelText>{t.fieldRedirectUrl}</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input>
+                    <InputField
+                      value={form.redirectToUrl}
+                      onChangeText={(v) => setForm((f) => ({ ...f, redirectToUrl: v }))}
+                      placeholder="https://"
+                      autoCapitalize="none"
+                      keyboardType="url"
+                    />
+                  </Input>
+                </FormControl>
+              ) : null}
+            </Box>
+
+            {/* Precios + descuento */}
+            <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="$white">
+              <HStack space="sm" alignItems="center" mb="$2">
+                <Text fontSize="$lg">💵</Text>
+                <Text fontSize="$md" fontWeight="$bold" color="$textLight900">
+                  {t.sectionPrices}
+                </Text>
+              </HStack>
+              <FormControl mb="$3">
+                <FormControlLabel>
+                  <FormControlLabelText>{t.fieldProductCurrency}</FormControlLabelText>
+                </FormControlLabel>
+                <HStack space="sm">
+                  {(['USD', 'MXN'] as const).map((c) => (
+                    <Pressable
+                      key={c}
+                      onPress={() => setForm((f) => ({ ...f, promoCurrency: c }))}
+                      flex={1}
+                      borderWidth={2}
+                      borderColor={form.promoCurrency === c ? '#00704A' : '$borderLight300'}
+                      borderRadius="$md"
+                      p="$3"
+                      bg={form.promoCurrency === c ? 'rgba(0,112,74,0.08)' : '$backgroundLight50'}
+                    >
+                      <Text textAlign="center" fontWeight="$semibold" color={form.promoCurrency === c ? '#00704A' : '$textLight700'}>
+                        {c === 'USD' ? t.currencyUsd : t.currencyMxn}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </HStack>
+              </FormControl>
+              <Text fontSize="$xs" color="$textLight500" mb="$3">
+                {t.tokensUsdNote}
+              </Text>
+              <HStack space="md" alignItems="flex-end">
+                <FormControl flex={1}>
+                  <FormControlLabel>
+                    <FormControlLabelText>{t.fieldOriginalPrice} *</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input>
+                    <InputField
+                      keyboardType="decimal-pad"
+                      value={form.originalPrice}
+                      onChangeText={(v) => setForm((f) => ({ ...f, originalPrice: v }))}
+                      placeholder="0.00"
+                    />
+                  </Input>
+                </FormControl>
+                <FormControl flex={1}>
+                  <FormControlLabel>
+                    <FormControlLabelText>{t.fieldCurrentPrice} *</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input>
+                    <InputField
+                      keyboardType="decimal-pad"
+                      value={form.currentPrice}
+                      onChangeText={(v) => setForm((f) => ({ ...f, currentPrice: v }))}
+                      placeholder="0.00"
+                    />
+                  </Input>
+                </FormControl>
+                <Box minWidth={72} bg="rgba(0,112,74,0.12)" borderRadius="$md" p="$3" borderWidth={1} borderColor="rgba(0,112,74,0.35)">
+                  <Text fontSize="$xs" color="#00704A" fontWeight="$semibold">
+                    {t.discountLabel}
+                  </Text>
+                  <Text fontSize="$md" fontWeight="$bold" color="#00704A">
+                    {pricePreview.discountPct}%
+                  </Text>
+                </Box>
+              </HStack>
+            </Box>
+
+            {/* Tipo de oferta y vista previa en tokens */}
+            <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="rgba(59,130,246,0.06)">
+              <HStack space="sm" alignItems="center" mb="$2">
+                <Text fontSize="$lg">🏷️</Text>
+                <Text fontSize="$md" fontWeight="$bold" color="$textLight900">
+                  {t.sectionOfferTokens}
+                </Text>
+              </HStack>
+              <Text fontSize="$xs" color="$textLight600" mb="$3">
+                {t.sectionOfferTokensHint}
+              </Text>
+              <VStack space="xs" mb="$3">
+                {(
+                  [
+                    ['percentage', t.offerPct],
+                    ['bogo', t.offerBogo],
+                    ['cashback_fixed', t.offerCbFixed],
+                    ['cashback_percentage', t.offerCbPct],
+                  ] as const
+                ).map(([value, label]) => (
+                  <Pressable
+                    key={value}
+                    onPress={() => setForm((f) => ({ ...f, offerType: value }))}
+                    borderWidth={1}
+                    borderColor={form.offerType === value ? '#00704A' : '$borderLight300'}
+                    borderRadius="$md"
+                    px="$3"
+                    py="$2"
+                    bg={form.offerType === value ? 'rgba(0,112,74,0.1)' : '$white'}
+                  >
+                    <Text
+                      fontSize="$sm"
+                      color={form.offerType === value ? '#00704A' : '$textLight800'}
+                      fontWeight={form.offerType === value ? '$semibold' : '$normal'}
+                    >
+                      {label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </VStack>
+              {(form.offerType === 'cashback_fixed' || form.offerType === 'cashback_percentage') && (
+                <FormControl mb="$3">
+                  <FormControlLabel>
+                    <FormControlLabelText>{t.fieldCashback}</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input>
+                    <InputField
+                      keyboardType="decimal-pad"
+                      value={form.cashbackValue}
+                      onChangeText={(v) => setForm((f) => ({ ...f, cashbackValue: v }))}
+                      placeholder={form.offerType === 'cashback_percentage' ? '0-100' : '0'}
+                    />
+                  </Input>
+                </FormControl>
+              )}
+              <Box bg="rgba(59,130,246,0.12)" borderRadius="$md" p="$4" borderWidth={1} borderColor="rgba(59,130,246,0.35)">
+                <Text fontSize="$xs" color="$textLight600" fontWeight="$semibold" mb="$1">
+                  {t.tokenPreviewTitle}
+                </Text>
+                <Text fontSize="$lg" fontWeight="$bold" color="#1d4ed8">
+                  {pricePreview.tokenUsd.toFixed(2)} USD = {pricePreview.tokenUsd.toFixed(2)} {TOKEN_SYMBOL}
+                </Text>
+                <Text fontSize="$xs" color="$textLight500" mt="$2">
+                  {t.tokenPreviewFoot}
+                </Text>
+              </Box>
+            </Box>
+
             <FormControl>
             <FormControlLabel><FormControlLabelText>{t.fieldTitle} *</FormControlLabelText></FormControlLabel>
             <Input><InputField value={form.title} onChangeText={(v) => setForm((f) => ({ ...f, title: v }))} placeholder={language === 'es' ? 'Ej: Oferta Especial de Electrónica' : 'e.g. Special Electronics Offer'} /></Input>
@@ -553,26 +959,6 @@ export default function UploadPromotionsScreen() {
           {pricesFromIa ? (
             <Text fontSize="$xs" color="$textLight500">{t.pricesInUsd}</Text>
           ) : null}
-          <HStack space="md">
-            <FormControl flex={1}>
-              <FormControlLabel><FormControlLabelText>{t.fieldOriginalPrice}</FormControlLabelText></FormControlLabel>
-              <Input><InputField keyboardType="numeric" value={form.originalPrice} onChangeText={(v) => setForm((f) => ({ ...f, originalPrice: v }))} placeholder="0" /></Input>
-            </FormControl>
-            <FormControl flex={1}>
-              <FormControlLabel><FormControlLabelText>{t.fieldCurrentPrice}</FormControlLabelText></FormControlLabel>
-              <Input><InputField keyboardType="numeric" value={form.currentPrice} onChangeText={(v) => setForm((f) => ({ ...f, currentPrice: v }))} placeholder="0" /></Input>
-            </FormControl>
-          </HStack>
-          <HStack space="md">
-            <FormControl flex={1}>
-              <FormControlLabel><FormControlLabelText>{t.fieldOfferType}</FormControlLabelText></FormControlLabel>
-              <Input><InputField value={form.offerType} onChangeText={(v) => setForm((f) => ({ ...f, offerType: v }))} placeholder="percentage" /></Input>
-            </FormControl>
-            <FormControl flex={1}>
-              <FormControlLabel><FormControlLabelText>{t.fieldCashback}</FormControlLabelText></FormControlLabel>
-              <Input><InputField keyboardType="numeric" value={form.cashbackValue} onChangeText={(v) => setForm((f) => ({ ...f, cashbackValue: v }))} placeholder="0" /></Input>
-            </FormControl>
-          </HStack>
           <FormControl>
             <FormControlLabel><FormControlLabelText>{t.fieldStoreName}</FormControlLabelText></FormControlLabel>
             <Input><InputField value={form.storeName} onChangeText={(v) => setForm((f) => ({ ...f, storeName: v }))} placeholder={t.fieldStoreName} /></Input>
@@ -595,6 +981,85 @@ export default function UploadPromotionsScreen() {
             <FormControlLabel><FormControlLabelText>{t.fieldCountry}</FormControlLabelText></FormControlLabel>
             <Input><InputField value={form.country} onChangeText={(v) => setForm((f) => ({ ...f, country: v }))} placeholder={t.fieldCountry} /></Input>
           </FormControl>
+
+          <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="$backgroundLight50">
+            <HStack justifyContent="space-between" alignItems="center" mb="$2" space="md">
+              <Text fontSize="$md" fontWeight="$semibold" color="$textLight900" flex={1}>
+                {t.gpsSectionTitle}
+              </Text>
+              <Switch
+                value={form.gpsActivation}
+                onValueChange={(v) => setForm((f) => ({ ...f, gpsActivation: v }))}
+                trackColor={{ false: '#CBD5E0', true: '#a8d4c4' }}
+                thumbColor={form.gpsActivation ? '#00704A' : '#f4f4f5'}
+              />
+            </HStack>
+            <Text fontSize="$xs" color="$textLight600" mb="$3">
+              {t.gpsSectionHint}
+            </Text>
+            {form.gpsActivation ? (
+              <VStack space="md">
+                <Button
+                  size="md"
+                  variant="outline"
+                  borderColor="#00704A"
+                  onPress={fetchLocationFromDevice}
+                  isDisabled={fetchingGps}
+                >
+                  {fetchingGps ? (
+                    <ActivityIndicator color="#00704A" />
+                  ) : (
+                    <ButtonText color="#00704A">{t.getLocationFromDevice}</ButtonText>
+                  )}
+                </Button>
+                <HStack space="md">
+                  <FormControl flex={1}>
+                    <FormControlLabel>
+                      <FormControlLabelText>{t.fieldLatitude}</FormControlLabelText>
+                    </FormControlLabel>
+                    <Input>
+                      <InputField
+                        keyboardType="decimal-pad"
+                        value={form.storeLatitude}
+                        onChangeText={(v) => setForm((f) => ({ ...f, storeLatitude: v }))}
+                        placeholder={language === 'es' ? 'ej. 19.432608' : 'e.g. 19.432608'}
+                      />
+                    </Input>
+                  </FormControl>
+                  <FormControl flex={1}>
+                    <FormControlLabel>
+                      <FormControlLabelText>{t.fieldLongitude}</FormControlLabelText>
+                    </FormControlLabel>
+                    <Input>
+                      <InputField
+                        keyboardType="decimal-pad"
+                        value={form.storeLongitude}
+                        onChangeText={(v) => setForm((f) => ({ ...f, storeLongitude: v }))}
+                        placeholder={language === 'es' ? 'ej. -99.133209' : 'e.g. -99.133209'}
+                      />
+                    </Input>
+                  </FormControl>
+                </HStack>
+                <FormControl>
+                  <FormControlLabel>
+                    <FormControlLabelText>{t.fieldRadiusM}</FormControlLabelText>
+                  </FormControlLabel>
+                  <Input>
+                    <InputField
+                      keyboardType="number-pad"
+                      value={form.locationRadiusMeters}
+                      onChangeText={(v) => setForm((f) => ({ ...f, locationRadiusMeters: v }))}
+                      placeholder="500"
+                    />
+                  </Input>
+                  <Text fontSize="$xs" color="$textLight500" mt="$1">
+                    {t.radiusHint}
+                  </Text>
+                </FormControl>
+              </VStack>
+            ) : null}
+          </Box>
+
           <FormControl>
             <FormControlLabel><FormControlLabelText>{t.fieldValidFrom}</FormControlLabelText></FormControlLabel>
             {hasDatePicker && DateTimePicker ? (
@@ -652,13 +1117,24 @@ export default function UploadPromotionsScreen() {
             ) : (
               <Input><InputField value={form.validUntil} onChangeText={(v) => setForm((f) => ({ ...f, validUntil: v }))} placeholder="YYYY-MM-DD" /></Input>
             )}
-          )}
           </FormControl>
           <Button size="md" variant={isPermanent ? 'solid' : 'outline'} bg={isPermanent ? '#00704A' : undefined} borderColor="#00704A" onPress={() => setIsPermanent((p) => !p)}>
             <ButtonText color={isPermanent ? '$white' : '#00704A'}>∞ {t.permanentPromo}</ButtonText>
           </Button>
 
             {error ? <Text color="$error600">{error}</Text> : null}
+
+            <Box
+              bg="rgba(245, 158, 11, 0.14)"
+              borderRadius="$md"
+              p="$3"
+              borderWidth={1}
+              borderColor="rgba(217, 119, 6, 0.45)"
+            >
+              <Text fontSize="$xs" color="$textLight800" lineHeight="$sm">
+                {t.reviewBeforePublish}
+              </Text>
+            </Box>
 
             <Button size="lg" bg="#00704A" onPress={handleSubmit} isDisabled={loading}>
               <ButtonText>{loading ? (language === 'es' ? 'Enviando...' : 'Sending...') : t.submit}</ButtonText>

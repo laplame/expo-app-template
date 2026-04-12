@@ -12,6 +12,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import FormComponent, { FormField } from '../components/FormComponent';
 import { useSettings } from '../context/SettingsContext';
+import { useVerificationAccess } from '../context/VerificationAccessContext';
 import { useWalletBalance } from '../context/WalletBalanceContext';
 import { getKycForm, setKycForm, setUserId } from '../services/storage';
 import { getOrCreateDeviceId } from '../services/deviceIdentity';
@@ -41,6 +42,7 @@ const getDeviceLanguage = (): 'en' | 'es' => {
 export default function NYCScreen() {
   const navigation = useNavigation();
   const { language, setUserName } = useSettings();
+  const { refreshVerificationAccess } = useVerificationAccess();
   const { grantWelcomeBonus, grantThreeFieldsBonus } = useWalletBalance();
   const [verificationStatus, setVerificationStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [biometricError, setBiometricError] = useState<string | null>(null);
@@ -149,6 +151,7 @@ export default function NYCScreen() {
       if (granted) {
         // Opcional: Alert.alert('', language === 'es' ? '¡Recibiste 25 LUXAE (25 USD)!' : 'You received 25 LUXAE (25 USD)!');
       }
+      await refreshVerificationAccess();
       (navigation as any).navigate('Home');
       return;
     }
@@ -174,6 +177,7 @@ export default function NYCScreen() {
         if (granted) {
           // Opcional: Alert.alert('', language === 'es' ? '¡Recibiste 25 LUXAE (25 USD)!' : 'You received 25 LUXAE (25 USD)!');
         }
+        await refreshVerificationAccess();
         (navigation as any).navigate('Home');
       } else {
         setBiometricError(t.biometricFailed);

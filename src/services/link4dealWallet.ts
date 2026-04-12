@@ -11,7 +11,7 @@ export async function createLink4DealPolygonWallet(): Promise<WalletAddressItem>
   const item = await addWalletAddress(
     w.address,
     'link4deal',
-    `${TOKEN_SYMBOL} (Polygon) · ERC-20 ${ERC20_TOKEN_NAME}`,
+    `${TOKEN_SYMBOL} · ERC-20 ${ERC20_TOKEN_NAME}`,
     'polygon'
   );
   if (!item) {

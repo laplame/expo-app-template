@@ -21,10 +21,12 @@ const MOCK_BALANCES = {
 
 const MOCK_PRICES_USD: CoinPrices = {
   bitcoin: { usd: 97000 },
+  'bitcoin-cash': { usd: 450 },
   'wrapped-bitcoin': { usd: 97000 },
   ethereum: { usd: 3500 },
   'matic-network': { usd: 0.85 },
   solana: { usd: 140 },
+  ripple: { usd: 2 },
   tether: { usd: 1 },
   luxae: { usd: LUXAE_PRICE_USD },
 };

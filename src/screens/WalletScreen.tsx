@@ -16,6 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import { Modal, View, Alert } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSettings } from '../context/SettingsContext';
+import { useVerificationAccess } from '../context/VerificationAccessContext';
 import { useWalletDisclosure } from '../context/WalletDisclosureContext';
 import {
   useWalletBalance,
@@ -24,17 +25,26 @@ import {
   LUXAE_PRICE_USD,
 } from '../context/WalletBalanceContext';
 import WalletAddressSection from '../components/WalletAddressSection';
+import AddressPayReceiveModal from '../components/AddressPayReceiveModal';
 import {
   getWalletAddresses,
   addWalletAddress,
   isValidEvmAddress,
   isValidBtcAddress,
+  isValidBchAddress,
+  isValidXrpAddress,
+  isValidSolanaAddress,
 } from '../services/storage';
 import type { WalletChain } from '../services/storage';
 import { getEthBalance } from '../services/ethRpc';
 import { getBtcBalance } from '../services/btcRpc';
+import { getBchBalance } from '../services/bchRpc';
+import { getXrpBalance } from '../services/xrpRpc';
+import { getSolBalance } from '../services/solanaRpc';
 import { getMaticBalance } from '../services/polygonRpc';
-import { ERC20_TOKEN_NAME, TOKEN_SYMBOL } from '../constants/luxToken';
+import { TOKEN_SYMBOL } from '../constants/luxToken';
+import { formatAddressForUi } from '../utils/addressDisplay';
+import { getWalletScreenStrings } from '../i18n/uiStrings';
 
 function formatCrypto(amount: number, decimals = 6): string {
   return new Intl.NumberFormat('en-US', {
@@ -43,62 +53,9 @@ function formatCrypto(amount: number, decimals = 6): string {
   }).format(amount);
 }
 
-// Translations: EN/ES × USD/MXN so UI updates when selectors change
-function getTranslations(language: 'en' | 'es', currency: 'USD' | 'MXN') {
-  if (language === 'es') {
-    return {
-      title: 'Billetera',
-      totalLabel: currency === 'MXN' ? 'Total en MXN (pesos)' : 'Total en USD (dólares)',
-      balance: 'Saldo disponible',
-      recent: 'Actividad reciente',
-      empty: 'No hay transacciones recientes.',
-      error: 'Error al cargar precios. Reintentar.',
-      retry: 'Reintentar',
-      loading: 'Cargando precios...',
-      valueLabel: currency === 'MXN' ? 'Valor (MXN)' : 'Valor (USD)',
-      priceLabel: currency === 'MXN' ? 'Precio (MXN)' : 'Precio (USD)',
-      currencyName: currency === 'MXN' ? 'pesos mexicanos' : 'dólares',
-      luxaeStablecoin: `Token ${TOKEN_SYMBOL} · ERC-20 ${ERC20_TOKEN_NAME} · 1 USD`,
-      metamaskBalance: 'Saldo en la red',
-      polygonBalance: 'Saldo Polygon (MATIC)',
-      addAddress: 'Añadir dirección',
-      addAddressManual: 'Añadir dirección manual',
-      addAddressEth: 'Añadir dirección ETH (Ethereum)',
-      addAddressPolygon: 'Añadir dirección Polygon (MATIC)',
-      addAddressBtc: 'Añadir dirección BTC (Bitcoin)',
-      addressPlaceholder: '0x... o bc1...',
-      invalidAddress: 'Dirección no válida.',
-      added: 'Dirección añadida.',
-    };
-  }
-  return {
-    title: 'Wallet',
-    totalLabel: currency === 'MXN' ? 'Total in MXN (pesos)' : 'Total in USD (dollars)',
-    balance: 'Available balance',
-    recent: 'Recent activity',
-    empty: 'No recent transactions.',
-    error: 'Error loading prices. Retry.',
-    retry: 'Retry',
-    loading: 'Loading prices...',
-    valueLabel: currency === 'MXN' ? 'Value (MXN)' : 'Value (USD)',
-    priceLabel: currency === 'MXN' ? 'Price (MXN)' : 'Price (USD)',
-    currencyName: currency === 'MXN' ? 'Mexican pesos' : 'dollars',
-    luxaeStablecoin: `Token ${TOKEN_SYMBOL} · ERC-20 ${ERC20_TOKEN_NAME} · 1 USD`,
-    metamaskBalance: 'Balance on network',
-    polygonBalance: 'Polygon (MATIC) balance',
-    addAddress: 'Add address',
-    addAddressManual: 'Add address manually',
-    addAddressEth: 'Add ETH (Ethereum) address',
-    addAddressPolygon: 'Add Polygon (MATIC) address',
-    addAddressBtc: 'Add BTC (Bitcoin) address',
-    addressPlaceholder: '0x... or bc1...',
-    invalidAddress: 'Invalid address.',
-    added: 'Address added.',
-  };
-}
-
 export default function WalletScreen() {
   const { language, currency } = useSettings();
+  const { revealWalletAddresses, refreshVerificationAccess } = useVerificationAccess();
   const { notifyWalletScreenFocused } = useWalletDisclosure();
   const {
     loading,
@@ -117,20 +74,42 @@ export default function WalletScreen() {
   const [btcAddress, setBtcAddress] = useState<string | null>(null);
   const [btcBalance, setBtcBalance] = useState(0);
   const [loadingBtc, setLoadingBtc] = useState(false);
+  const [bchAddress, setBchAddress] = useState<string | null>(null);
+  const [bchBalance, setBchBalance] = useState(0);
+  const [loadingBch, setLoadingBch] = useState(false);
+  const [xrpAddress, setXrpAddress] = useState<string | null>(null);
+  const [xrpBalance, setXrpBalance] = useState(0);
+  const [loadingXrp, setLoadingXrp] = useState(false);
+  const [solAddress, setSolAddress] = useState<string | null>(null);
+  const [solBalance, setSolBalance] = useState(0);
+  const [loadingSol, setLoadingSol] = useState(false);
   const [addAddressModal, setAddAddressModal] = useState<{
     visible: boolean;
     chain: WalletChain;
     input: string;
   }>({ visible: false, chain: 'ethereum', input: '' });
 
+  const [payReceiveModal, setPayReceiveModal] = useState<{
+    visible: boolean;
+    address: string | null;
+    chainLabel: string;
+    initialIntent: 'pay' | 'receive';
+  }>({ visible: false, address: null, chainLabel: '', initialIntent: 'receive' });
+
   const loadWalletAndBalance = useCallback(async () => {
     const list = await getWalletAddresses();
     const ethItem = list.find((w) => (w.chain ?? 'ethereum') === 'ethereum') ?? list.find((w) => !w.chain);
     const polygonItem = list.find((w) => w.chain === 'polygon');
     const btcItem = list.find((w) => w.chain === 'bitcoin');
+    const bchItem = list.find((w) => w.chain === 'bitcoin-cash');
+    const xrpItem = list.find((w) => w.chain === 'ripple');
+    const solItem = list.find((w) => w.chain === 'solana');
     setDefaultAddress(ethItem?.address ?? null);
     setPolygonAddress(polygonItem?.address ?? null);
     setBtcAddress(btcItem?.address ?? null);
+    setBchAddress(bchItem?.address ?? null);
+    setXrpAddress(xrpItem?.address ?? null);
+    setSolAddress(solItem?.address ?? null);
 
     if (ethItem?.address) {
       setLoadingEth(true);
@@ -167,33 +146,87 @@ export default function WalletScreen() {
     } else {
       setBtcBalance(0);
     }
+
+    if (bchItem?.address) {
+      setLoadingBch(true);
+      try {
+        setBchBalance(await getBchBalance(bchItem.address));
+      } finally {
+        setLoadingBch(false);
+      }
+    } else {
+      setBchBalance(0);
+    }
+
+    if (xrpItem?.address) {
+      setLoadingXrp(true);
+      try {
+        setXrpBalance(await getXrpBalance(xrpItem.address));
+      } finally {
+        setLoadingXrp(false);
+      }
+    } else {
+      setXrpBalance(0);
+    }
+
+    if (solItem?.address) {
+      setLoadingSol(true);
+      try {
+        setSolBalance(await getSolBalance(solItem.address));
+      } finally {
+        setLoadingSol(false);
+      }
+    } else {
+      setSolBalance(0);
+    }
   }, []);
 
   useFocusEffect(
     useCallback(() => {
+      refreshVerificationAccess();
       notifyWalletScreenFocused();
       loadWalletAndBalance();
-    }, [loadWalletAndBalance, notifyWalletScreenFocused])
+    }, [loadWalletAndBalance, notifyWalletScreenFocused, refreshVerificationAccess])
   );
 
-  const t = useMemo(() => getTranslations(language, currency), [language, currency]);
+  const t = useMemo(() => getWalletScreenStrings(language, currency), [language, currency]);
 
   const ethPriceUsd = pricesForCalculation.ethereum?.usd ?? 0;
   const maticPriceUsd = pricesForCalculation['matic-network']?.usd ?? 0;
   const btcPriceUsd = pricesForCalculation.bitcoin?.usd ?? 0;
+  const bchPriceUsd = pricesForCalculation['bitcoin-cash']?.usd ?? 0;
+  const xrpPriceUsd = pricesForCalculation.ripple?.usd ?? 0;
+  const solPriceUsd = pricesForCalculation.solana?.usd ?? 0;
   const walletTotalUsd =
     luxaeBalance * LUXAE_PRICE_USD +
     metamaskEthBalance * ethPriceUsd +
     polygonMaticBalance * maticPriceUsd +
-    btcBalance * btcPriceUsd;
+    btcBalance * btcPriceUsd +
+    bchBalance * bchPriceUsd +
+    xrpBalance * xrpPriceUsd +
+    solBalance * solPriceUsd;
   const walletTotalDisplay = currency === 'MXN' ? walletTotalUsd * USD_TO_MXN : walletTotalUsd;
   const formattedWalletTotal = formatMoney(walletTotalDisplay, currency);
 
   const handleAddAddress = useCallback(async () => {
     const { chain, input } = addAddressModal;
     const trimmed = input.trim();
-    const valid =
-      chain === 'bitcoin' ? isValidBtcAddress(trimmed) : isValidEvmAddress(trimmed);
+    const valid = (() => {
+      switch (chain) {
+        case 'bitcoin':
+          return isValidBtcAddress(trimmed);
+        case 'bitcoin-cash':
+          return isValidBchAddress(trimmed);
+        case 'ripple':
+          return isValidXrpAddress(trimmed);
+        case 'solana':
+          return isValidSolanaAddress(trimmed);
+        case 'ethereum':
+        case 'polygon':
+        default:
+          return isValidEvmAddress(trimmed);
+      }
+    })();
     if (!valid) {
       Alert.alert(t.addAddress, t.invalidAddress);
       return;
@@ -230,16 +263,6 @@ export default function WalletScreen() {
         chain: 'ethereum' as WalletChain,
       },
       {
-        id: 'polygon' as const,
-        name: 'Polygon',
-        symbol: 'MATIC',
-        balance: polygonMaticBalance,
-        priceUsd: maticPriceUsd,
-        subtitle: polygonAddress ? t.polygonBalance : undefined,
-        canAddAddress: true,
-        chain: 'polygon' as WalletChain,
-      },
-      {
         id: 'bitcoin' as const,
         name: 'Bitcoin',
         symbol: 'BTC',
@@ -249,21 +272,57 @@ export default function WalletScreen() {
         canAddAddress: true,
         chain: 'bitcoin' as WalletChain,
       },
+      {
+        id: 'bitcoin-cash' as const,
+        name: 'Bitcoin Cash',
+        symbol: 'BCH',
+        balance: bchBalance,
+        priceUsd: bchPriceUsd,
+        subtitle: bchAddress ? t.metamaskBalance : undefined,
+        canAddAddress: true,
+        chain: 'bitcoin-cash' as WalletChain,
+      },
+      {
+        id: 'ripple' as const,
+        name: 'XRP',
+        symbol: 'XRP',
+        balance: xrpBalance,
+        priceUsd: xrpPriceUsd,
+        subtitle: xrpAddress ? t.metamaskBalance : undefined,
+        canAddAddress: true,
+        chain: 'ripple' as WalletChain,
+      },
+      {
+        id: 'solana' as const,
+        name: 'Solana',
+        symbol: 'SOL',
+        balance: solBalance,
+        priceUsd: solPriceUsd,
+        subtitle: solAddress ? t.metamaskBalance : undefined,
+        canAddAddress: true,
+        chain: 'solana' as WalletChain,
+      },
     ],
     [
       luxaeBalance,
       metamaskEthBalance,
-      polygonMaticBalance,
       btcBalance,
+      bchBalance,
+      xrpBalance,
+      solBalance,
       ethPriceUsd,
-      maticPriceUsd,
       btcPriceUsd,
+      bchPriceUsd,
+      xrpPriceUsd,
+      solPriceUsd,
       defaultAddress,
-      polygonAddress,
       btcAddress,
+      bchAddress,
+      xrpAddress,
+      solAddress,
       t.luxaeStablecoin,
       t.metamaskBalance,
-      t.polygonBalance,
+      language,
     ]
   );
 
@@ -303,22 +362,41 @@ export default function WalletScreen() {
             )}
           </Box>
 
-          {/* Saldos: token LUXAE (ERC-20 LXD) + ETH (MetaMask al conectar). Empiezan en 0. */}
+          {/* Saldos: LUXAE + ETH + BTC + BCH + XRP + SOL. MATIC nativo se sigue sumando al total arriba sin tarjeta propia. */}
           {!loading && (
             <VStack space="md">
               <Text fontSize="$xl" fontWeight="$bold" color="$textLight900">
                 {t.balance}
               </Text>
+              {!revealWalletAddresses ? (
+                <Text fontSize="$xs" color="$textLight500" mb="$1">
+                  {t.addressMaskedHint}
+                </Text>
+              ) : null}
               {coins.map((coin) => {
                 const valueUsd = coin.balance * coin.priceUsd;
                 const valueDisplay = currency === 'MXN' ? valueUsd * USD_TO_MXN : valueUsd;
                 const priceDisplay = currency === 'MXN' ? coin.priceUsd * USD_TO_MXN : coin.priceUsd;
                 const isLoadingCoin =
                   (coin.id === 'ethereum' && loadingEth) ||
-                  (coin.id === 'polygon' && loadingMatic) ||
-                  (coin.id === 'bitcoin' && loadingBtc);
+                  (coin.id === 'bitcoin' && loadingBtc) ||
+                  (coin.id === 'bitcoin-cash' && loadingBch) ||
+                  (coin.id === 'ripple' && loadingXrp) ||
+                  (coin.id === 'solana' && loadingSol);
                 const canAdd = 'canAddAddress' in coin && coin.canAddAddress;
                 const chain = 'chain' in coin ? coin.chain : null;
+                const coinAddress =
+                  coin.id === 'ethereum'
+                    ? defaultAddress
+                    : coin.id === 'bitcoin'
+                      ? btcAddress
+                      : coin.id === 'bitcoin-cash'
+                        ? bchAddress
+                        : coin.id === 'ripple'
+                          ? xrpAddress
+                          : coin.id === 'solana'
+                            ? solAddress
+                            : null;
                 return (
                   <Box
                     key={coin.id}
@@ -336,6 +414,11 @@ export default function WalletScreen() {
                         {'subtitle' in coin && coin.subtitle ? (
                           <Text fontSize="$xs" color="$textLight500">
                             {coin.subtitle}
+                          </Text>
+                        ) : null}
+                        {coinAddress ? (
+                          <Text fontSize="$xs" color="$textLight600" numberOfLines={1}>
+                            {formatAddressForUi(coinAddress, revealWalletAddresses)}
                           </Text>
                         ) : null}
                         <Text fontSize="$sm" color="$textLight600">
@@ -358,6 +441,24 @@ export default function WalletScreen() {
                             </Text>
                           </Pressable>
                         )}
+                        {coinAddress ? (
+                          <Pressable
+                            mt="$2"
+                            alignSelf="flex-start"
+                            onPress={() =>
+                              setPayReceiveModal({
+                                visible: true,
+                                address: coinAddress,
+                                chainLabel: coin.name,
+                                initialIntent: 'receive',
+                              })
+                            }
+                          >
+                            <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                              {t.payReceiveQr}
+                            </Text>
+                          </Pressable>
+                        ) : null}
                       </VStack>
                       <VStack space="xs" alignItems="flex-end">
                         <Text fontSize="$md" fontWeight="$semibold" color="#00704A">
@@ -391,7 +492,7 @@ export default function WalletScreen() {
         </VStack>
       </ScrollView>
 
-      {/* Modal: añadir dirección manual (ETH o BTC) */}
+      {/* Modal: añadir dirección manual (EVM, BTC, BCH, XRP, SOL) */}
       <Modal
         visible={addAddressModal.visible}
         transparent
@@ -403,9 +504,13 @@ export default function WalletScreen() {
             <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$3">
               {addAddressModal.chain === 'bitcoin'
                 ? t.addAddressBtc
-                : addAddressModal.chain === 'polygon'
-                  ? t.addAddressPolygon
-                  : t.addAddressEth}
+                : addAddressModal.chain === 'bitcoin-cash'
+                  ? t.addAddressBch
+                  : addAddressModal.chain === 'ripple'
+                    ? t.addAddressXrp
+                    : addAddressModal.chain === 'solana'
+                      ? t.addAddressSol
+                      : t.addAddressEth}
             </Text>
             <Input size="md" mb="$4" borderRadius="$lg">
               <InputField
@@ -433,6 +538,14 @@ export default function WalletScreen() {
           </Box>
         </View>
       </Modal>
+
+      <AddressPayReceiveModal
+        visible={payReceiveModal.visible}
+        onClose={() => setPayReceiveModal((p) => ({ ...p, visible: false }))}
+        addressOverride={payReceiveModal.address}
+        chainLabel={payReceiveModal.chainLabel}
+        initialIntent={payReceiveModal.initialIntent}
+      />
     </Box>
   );
 }

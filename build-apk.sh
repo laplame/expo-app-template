@@ -19,7 +19,11 @@ cd android
 cd ..
 mv android/app/build/outputs/apk/release/app-release.apk "$APK_NAME"
 
+# Enlace estable en la raíz para instalar sin copiar el nombre con timestamp
+ln -sf "$APK_NAME" damecodigo-latest.apk
+
 echo "✅ APK generado: $APK_NAME"
+echo "🔗 Enlace: damecodigo-latest.apk → $APK_NAME"
 echo "📦 Tamaño: $(du -h "$APK_NAME" | cut -f1)"
 
 # Limpiar carpetas de build innecesarias

@@ -18,6 +18,7 @@ import {
 } from '@gluestack-ui/themed';
 import { Alert, Image, Linking, Modal, Pressable as RNPressable } from 'react-native';
 import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import * as ImagePicker from 'expo-image-picker';
 import { useSettings } from '../context/SettingsContext';
@@ -77,7 +78,7 @@ const COUNTRIES = [
 ];
 
 export default function InfluencerSearchScreen() {
-  const navigation = useNavigation();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const route = useRoute<RouteProp<RootStackParamList, 'InfluencerSearch'>>();
   const { language, currency } = useSettings();
   const { addLuxaeBalance } = useWalletBalance();
@@ -132,6 +133,7 @@ export default function InfluencerSearchScreen() {
     noResults: language === 'es' ? 'No se encontraron influencers' : 'No influencers found',
     addAnother: language === 'es' ? 'Agregar otro' : 'Add another',
     done: language === 'es' ? 'Listo' : 'Done',
+    viewInfluencersFeed: language === 'es' ? 'Ver Influencers y votar' : 'See Influencers & Vote',
     cancel: language === 'es' ? 'Cancelar' : 'Cancel',
     ok: language === 'es' ? 'Aceptar' : 'OK',
     analyzing: language === 'es' ? 'Analizando con IA...' : 'Analyzing with AI...',
@@ -276,15 +278,16 @@ export default function InfluencerSearchScreen() {
     }
     setCreating(true);
     setError(null);
-    const parseFollowers = (v: string): number => {
+    try {
+      const parseFollowers = (v: string): number => {
       const s = String(v || '').trim().toUpperCase();
       const num = parseFloat(s.replace(/[^\d.]/g, '')) || 0;
       if (s.endsWith('K')) return Math.round(num * 1000);
       if (s.endsWith('M')) return Math.round(num * 1000000);
       return Math.round(num);
-    };
+      };
 
-    const socialMedia = SOCIAL_PLATFORMS.map((p) => {
+      const socialMedia = SOCIAL_PLATFORMS.map((p) => {
       const data = form.socialByPlatform?.[p.id];
       if (!data) return null;
       const username = (data.username ?? '').trim();
@@ -327,12 +330,13 @@ export default function InfluencerSearchScreen() {
         return false;
       });
       if (match) {
-        setCreating(false);
+        setInfluencers([match]);
+        setShowCreateForm(false);
         Alert.alert(
-          language === 'es' ? 'Ya existe' : 'Already exists',
+          language === 'es' ? 'Ya está dado de alta' : 'Already registered',
           language === 'es'
-            ? `Parece que "${displayName}" ya está registrado. Revisa la lista de influencers.`
-            : `"${displayName}" appears to be already registered. Check the influencers list.`,
+            ? `"${displayName}" ya figura en la app. Puedes ver su ficha abajo o en Influencers y votar.`
+            : `"${displayName}" is already listed. You can see their card below or under Influencers & Vote.`,
           [{ text: 'OK' }]
         );
         return;
@@ -347,17 +351,48 @@ export default function InfluencerSearchScreen() {
       avatar: avatarUrl,
     };
     const result = await createInfluencer(payload);
-    setCreating(false);
     if (result.ok && result.data) {
       setCreatedInfluencer(result.data);
       setShowCreateForm(false);
       await addLuxaeBalance(INFLUENCER_REWARD_LUXAE);
       setRewardAmount(INFLUENCER_REWARD_LUXAE);
       setShowRewardModal(true);
-    } else {
-      setError(result.error ?? (language === 'es' ? 'Error al crear' : 'Create failed'));
+      return;
     }
-  }, [form, t.ok, language, addLuxaeBalance, platform]);
+    if (result.duplicate) {
+      const again = await searchInfluencers({ q: displayName, limit: 20 });
+      if (again.ok && (again.influencers?.length ?? 0) > 0) {
+        setInfluencers(again.influencers!);
+        setShowCreateForm(false);
+      }
+      Alert.alert(
+        language === 'es' ? 'Ya está dado de alta' : 'Already registered',
+        language === 'es'
+          ? (result.error ||
+              `El servidor indica que este perfil ya existe. ${again.ok && (again.influencers?.length ?? 0) > 0 ? 'Mostramos coincidencias abajo.' : 'Prueba buscar por nombre.'}`)
+          : (result.error ||
+              `The server says this profile already exists. ${again.ok && (again.influencers?.length ?? 0) > 0 ? 'Matches are shown below.' : 'Try searching by name.'}`),
+        [{ text: 'OK' }]
+      );
+      setError(null);
+      return;
+    }
+      const errMsg = result.error ?? (language === 'es' ? 'Error al crear' : 'Create failed');
+      setError(errMsg);
+      Alert.alert(language === 'es' ? 'No se pudo crear' : 'Could not create', errMsg, [{ text: 'OK' }]);
+    } catch (submitErr: unknown) {
+      const msg =
+        submitErr instanceof Error ? submitErr.message : String(submitErr ?? 'Error');
+      setError(msg);
+      Alert.alert(
+        language === 'es' ? 'Error' : 'Error',
+        language === 'es' ? `Algo salió mal: ${msg}` : `Something went wrong: ${msg}`,
+        [{ text: 'OK' }]
+      );
+    } finally {
+      setCreating(false);
+    }
+  }, [form, t.ok, language, addLuxaeBalance]);
 
   const resetAndAddAnother = useCallback(() => {
     setCreatedInfluencer(null);
@@ -488,11 +523,20 @@ export default function InfluencerSearchScreen() {
               {language === 'es' ? '¡Influencer creado!' : 'Influencer created!'}
             </Text>
             <InfluencerCard influencer={createdInfluencer} compact={false} language={language} />
-            <HStack space="sm">
-              <Button flex={1} onPress={resetAndAddAnother} variant="outline" borderColor="#00704A">
+            <HStack space="sm" flexWrap="wrap">
+              <Button flex={1} minW={120} onPress={resetAndAddAnother} variant="outline" borderColor="#00704A">
                 <ButtonText color="#00704A">{t.addAnother}</ButtonText>
               </Button>
-              <Button flex={1} onPress={() => navigation.goBack()} bg="#00704A">
+              <Button
+                flex={1}
+                minW={120}
+                onPress={() => navigation.navigate('InfluencersList')}
+                variant="outline"
+                borderColor="#00704A"
+              >
+                <ButtonText color="#00704A">{t.viewInfluencersFeed}</ButtonText>
+              </Button>
+              <Button flex={1} minW={120} onPress={() => navigation.goBack()} bg="#00704A">
                 <ButtonText color="$white">{t.done}</ButtonText>
               </Button>
             </HStack>
@@ -738,14 +782,21 @@ export default function InfluencerSearchScreen() {
                     ? `Has ganado ${rewardAmount} ${TOKEN_SYMBOL} por registrar un influencer.`
                     : `You earned ${rewardAmount} ${TOKEN_SYMBOL} for registering an influencer.`}
                 </Text>
-                <Button
-                  mt="$5"
-                  size="md"
-                  bg="#00704A"
-                  onPress={() => setShowRewardModal(false)}
-                >
-                  <ButtonText>{language === 'es' ? '¡Entendido!' : 'Got it!'}</ButtonText>
-                </Button>
+                <VStack space="sm" w="$full" mt="$5">
+                  <Button
+                    size="md"
+                    bg="#00704A"
+                    onPress={() => {
+                      setShowRewardModal(false);
+                      navigation.navigate('InfluencersList');
+                    }}
+                  >
+                    <ButtonText>{t.viewInfluencersFeed}</ButtonText>
+                  </Button>
+                  <Button size="md" variant="outline" borderColor="#00704A" onPress={() => setShowRewardModal(false)}>
+                    <ButtonText color="#00704A">{language === 'es' ? '¡Entendido!' : 'Got it!'}</ButtonText>
+                  </Button>
+                </VStack>
               </Box>
             </RNPressable>
           </RNPressable>

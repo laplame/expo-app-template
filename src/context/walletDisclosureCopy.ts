@@ -31,8 +31,8 @@ export const WALLET_DISCLOSURE_STEPS: DisclosureStepCopy[] = [
   {
     titleEs: 'Generar nuevas direcciones',
     titleEn: 'Generating new addresses',
-    bodyEs: `Al generar una nueva dirección para el token ${TOKEN_SYMBOL} (ERC-20 ${ERC20_TOKEN_NAME}) en Polygon, se añade otra a la lista; puedes tener varias. Revisa cuál está marcada como predeterminada y confirma la dirección de destino antes de enviar fondos. Eliminar una dirección de la lista no mueve los activos que ya estén en la cadena.`,
-    bodyEn: `When you generate a new address for the ${TOKEN_SYMBOL} token (ERC-20 ${ERC20_TOKEN_NAME}) on Polygon, another entry is added; you may have several. Check which is set as default and confirm the destination before sending. Removing an address from the list does not move assets already on-chain.`,
+    bodyEs: `Al generar una nueva dirección para el token ${TOKEN_SYMBOL} (ERC-20 ${ERC20_TOKEN_NAME}), se añade otra a la lista; puedes tener varias. Revisa cuál está marcada como predeterminada y confirma la dirección de destino antes de enviar fondos. Eliminar una dirección de la lista no mueve los activos que ya estén en la cadena.`,
+    bodyEn: `When you generate a new address for the ${TOKEN_SYMBOL} token (ERC-20 ${ERC20_TOKEN_NAME}), another entry is added; you may have several. Check which is set as default and confirm the destination before sending. Removing an address from the list does not move assets already on-chain.`,
   },
   {
     titleEs: 'Tu responsabilidad',
@@ -90,12 +90,12 @@ export const WALLET_DISCLOSURE_UI = {
   },
 } as const;
 
-/** Confirmación al generar dirección Polygon para LUXAE (ERC-20 LXD). */
+/** Confirmación al generar dirección para LUXAE (ERC-20 LXD). */
 export const GENERATE_LUX_TOKEN_POLYGON_CONFIRM = {
   titleEs: `Generar dirección ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME})`,
   titleEn: `Generate ${TOKEN_SYMBOL} (${ERC20_TOKEN_NAME}) address`,
-  messageEs: `Se añadirá una nueva dirección en Polygon para el token ${TOKEN_SYMBOL} (ERC-20 ${ERC20_TOKEN_NAME}); no sustituye automáticamente las anteriores. Revisa la dirección predeterminada antes de enviar fondos. ¿Continuar?`,
-  messageEn: `A new Polygon address will be added for the ${TOKEN_SYMBOL} token (ERC-20 ${ERC20_TOKEN_NAME}); it does not automatically replace previous ones. Check your default address before sending funds. Continue?`,
+  messageEs: `Se añadirá una nueva dirección para el token ${TOKEN_SYMBOL} (ERC-20 ${ERC20_TOKEN_NAME}); no sustituye automáticamente las anteriores. Revisa la dirección predeterminada antes de enviar fondos. ¿Continuar?`,
+  messageEn: `A new address will be added for the ${TOKEN_SYMBOL} token (ERC-20 ${ERC20_TOKEN_NAME}); it does not automatically replace previous ones. Check your default address before sending funds. Continue?`,
   buttonGenerateEs: 'Generar',
   buttonGenerateEn: 'Generate',
   buttonCancelEs: 'Cancelar',

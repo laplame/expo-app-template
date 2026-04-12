@@ -23,6 +23,12 @@ module.exports = {
     version,
     plugins: [
       'expo-secure-store',
+      [
+        'expo-camera',
+        {
+          cameraPermission: 'Allow $(PRODUCT_NAME) to access the camera to scan QR codes for payments.',
+        },
+      ],
       ...(appJson.expo.plugins || []),
       ...(googleMapsApiKey ? [withGoogleMaps({ apiKey: googleMapsApiKey })] : []),
     ],

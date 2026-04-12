@@ -11,7 +11,14 @@ import { StatusBar } from 'expo-status-bar';
 import { Linking, Platform, StyleSheet } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
-import { getPromotions, ApiPromotionDoc } from '../services/promotionsApi';
+import {
+  getPromotions,
+  ApiPromotionDoc,
+  getStoreCoordinatesFromDoc,
+  isGpsCouponRequired,
+  getLocationRadiusFromDoc,
+} from '../services/promotionsApi';
+import { haversineMeters } from '../utils/geo';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 
@@ -27,17 +34,29 @@ export interface Promotion {
   offerEs: string;
   cryptoAccepted: string[];
   distanceKm: number | null;
+  gpsRequired: boolean;
+  radiusMeters: number;
 }
 
 const DEFAULT_COORDS = { lat: 19.4326, lng: -99.1332 };
 
-function mapApiDocToPromotion(doc: ApiPromotionDoc, index: number): Promotion & { distanceKm: number | null } {
+function mapApiDocToPromotion(
+  doc: ApiPromotionDoc,
+  user: { lat: number; lng: number } | null
+): Promotion & { distanceKm: number | null } {
   const loc = doc.storeLocation;
   const address = [loc?.address, loc?.city, loc?.country].filter(Boolean).join(', ') || '—';
-  const coords = loc?.coordinates ?? null;
-  const lat = coords?.lat ?? DEFAULT_COORDS.lat;
-  const lng = coords?.lng ?? DEFAULT_COORDS.lng;
-  const distanceKm = coords ? 0.5 + index * 0.4 : null;
+  const pt = getStoreCoordinatesFromDoc(doc);
+  const lat = pt?.lat ?? DEFAULT_COORDS.lat;
+  const lng = pt?.lng ?? DEFAULT_COORDS.lng;
+  const gpsRequired = isGpsCouponRequired(doc);
+  const radiusMeters = getLocationRadiusFromDoc(doc);
+  let distanceKm: number | null = null;
+  if (user && pt) {
+    distanceKm = haversineMeters(user, pt) / 1000;
+  } else if (!pt) {
+    distanceKm = null;
+  }
   return {
     id: doc._id,
     name: doc.productName || doc.title,
@@ -50,6 +69,8 @@ function mapApiDocToPromotion(doc: ApiPromotionDoc, index: number): Promotion & 
     offerEs: doc.title || doc.description || '',
     cryptoAccepted: [TOKEN_SYMBOL, 'ETH', 'USDT'],
     distanceKm,
+    gpsRequired,
+    radiusMeters,
   };
 }
 
@@ -64,6 +85,8 @@ function getTranslations(language: 'en' | 'es') {
       link4dealRewards: 'link4deal rewards',
       mapMockupLabel: 'Mapa (mockup)',
       mapMockupHint: 'Aquí irá el mapa con GPS',
+      gpsCoupon: 'Cupón por ubicación',
+      withinRadius: 'Dentro del radio',
     };
   }
   return {
@@ -75,6 +98,8 @@ function getTranslations(language: 'en' | 'es') {
     link4dealRewards: 'link4deal rewards',
     mapMockupLabel: 'Map (mockup)',
     mapMockupHint: 'Map & GPS logic coming here',
+    gpsCoupon: 'Location-based coupon',
+    withinRadius: 'Within radius',
   };
 }
 
@@ -86,13 +111,27 @@ export default function PromotionsMapScreen() {
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
     getPromotions({ limit: 12, status: 'active' }).then((res) => {
+      if (cancelled) return;
       if (res.ok && res.docs?.length) {
-        setPromotions(res.docs.map((d, i) => mapApiDocToPromotion(d, i)));
+        const list = res.docs.map((d) => mapApiDocToPromotion(d, userLocation));
+        list.sort((a, b) => {
+          const da = a.distanceKm ?? Number.POSITIVE_INFINITY;
+          const db = b.distanceKm ?? Number.POSITIVE_INFINITY;
+          return da - db;
+        });
+        setPromotions(list);
+      } else {
+        setPromotions([]);
       }
       setLoading(false);
     });
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [userLocation]);
 
   useEffect(() => {
     let mounted = true;
@@ -216,13 +255,20 @@ export default function PromotionsMapScreen() {
                   borderLeftWidth={4}
                   borderLeftColor="#00704A"
                 >
-                  {index === 0 && (
+                  {index === 0 && userLocation && (
                     <HStack bg="#00704A" alignSelf="flex-start" px="$2" py="$1" borderRadius="$md" mb="$2">
                       <Text fontSize="$xs" color="$white" fontWeight="$bold">
                         {t.nearest}
                       </Text>
                     </HStack>
                   )}
+                  {promo.gpsRequired ? (
+                    <HStack bg="#6B21A8" alignSelf="flex-start" px="$2" py="$1" borderRadius="$md" mb="$2" flexWrap="wrap">
+                      <Text fontSize="$xs" color="$white" fontWeight="$bold">
+                        📍 {t.gpsCoupon} · {promo.radiusMeters} m
+                      </Text>
+                    </HStack>
+                  ) : null}
                   <Text fontSize="$lg" fontWeight="$bold" color="$textLight900">
                     {language === 'es' ? promo.nameEs : promo.name}
                   </Text>
@@ -241,9 +287,19 @@ export default function PromotionsMapScreen() {
                     </Text>
                   </HStack>
                   <HStack justifyContent="space-between" alignItems="center" mt="$2">
-                    <Text fontSize="$xs" color="$textLight500">
-                      {promo.distanceKm != null ? `${promo.distanceKm.toFixed(1)} km` : '—'}
-                    </Text>
+                    <VStack space="xs" flex={1}>
+                      <Text fontSize="$xs" color="$textLight500">
+                        {promo.distanceKm != null ? `${promo.distanceKm.toFixed(2)} km` : '—'}
+                      </Text>
+                      {promo.gpsRequired &&
+                      userLocation &&
+                      promo.distanceKm != null &&
+                      promo.distanceKm * 1000 <= promo.radiusMeters ? (
+                        <Text fontSize="$xs" color="#15803d" fontWeight="$semibold">
+                          ✓ {t.withinRadius}
+                        </Text>
+                      ) : null}
+                    </VStack>
                     <Pressable
                       onPress={() => openDirections(promo)}
                       bg="#00704A"

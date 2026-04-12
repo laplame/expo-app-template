@@ -133,3 +133,9 @@ La app no necesita conocer esta lógica; solo debe usar el valor de `redirectToU
 - En la app: mostrar pantalla con un botón que abra `redirectToUrl` (por ejemplo "Comprar en Amazon" o "Ir a comprar") y un botón "Cerrar".
 
 Con esto la lógica del cupón "Ir a comprar" queda replicada en la app.
+
+---
+
+## 7. Cupón con QR (no redirección): decodificar información
+
+Cuando la respuesta trae `qrValue` y debes **interpretar o validar** lo que contiene el código (promoción, descuento, referido, etc.), el token en sí es **opaco** en el servidor: la forma soportada de “decodificarlo” es llamar a **`POST /api/discount-qr/verify`** (y para canje, **`/api/discount-qr/redeem`**). El formato de respaldo local `LINK4DEAL-DISCOUNT.local.…` y el detalle de todos los campos de respuesta están documentados en **[qr_cupon_promocion.md](./qr_cupon_promocion.md)**.

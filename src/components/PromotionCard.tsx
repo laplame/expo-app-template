@@ -1,11 +1,15 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text, VStack, HStack, Pressable } from '@gluestack-ui/themed';
 import { Image } from 'react-native';
 import {
   ApiPromotionDoc,
   promotionImageUrl,
   formatPromotionDate,
+  isGpsCouponRequired,
+  SITE_PROMO_URLS,
 } from '../services/promotionsApi';
+import CardSocialActions from './CardSocialActions';
+import { getCardSocialStrings } from '../i18n/uiStrings';
 
 const CATEGORY_EMOJI: Record<string, string> = {
   electronics: '📱',
@@ -36,9 +40,24 @@ interface PromotionCardProps {
   language: 'en' | 'es';
   onPress?: () => void;
   compact?: boolean;
+  /** Ancho 100% del contenedor (columnas masonry / feed). */
+  fillColumn?: boolean;
+  /** Altura de la imagen en modo masonry (variar para look Pinterest). */
+  masonryImageHeight?: number;
+  /** Barra social; si no se indica, solo se muestra cuando `fillColumn` (feed masonry). */
+  showSocialActions?: boolean;
 }
 
-export default function PromotionCard({ doc, language, onPress, compact }: PromotionCardProps) {
+export default function PromotionCard({
+  doc,
+  language,
+  onPress,
+  compact,
+  fillColumn,
+  masonryImageHeight,
+  showSocialActions: showSocialActionsProp,
+}: PromotionCardProps) {
+  const showSocialBar = showSocialActionsProp !== undefined ? showSocialActionsProp : Boolean(fillColumn);
   const title = doc.title || doc.productName || '';
   const imgUrl = promotionImageUrl(doc);
   const emoji = CATEGORY_EMOJI[doc.category ?? ''] ?? '🏷️';
@@ -77,9 +96,31 @@ export default function PromotionCard({ doc, language, onPress, compact }: Promo
           </Text>
         </Box>
       )}
+      {isGpsCouponRequired(doc) && (
+        <Box
+          position="absolute"
+          top={doc.redirectInsteadOfQr ? 40 : 8}
+          left={8}
+          zIndex={1}
+          bg="#6B21A8"
+          borderRadius="$md"
+          px="$2"
+          py="$1"
+        >
+          <Text fontSize="$xs" color="$white" fontWeight="$bold">
+            📍 GPS
+          </Text>
+        </Box>
+      )}
 
       {/* Imagen desde API */}
-      <Box width="100%" height={compact ? 100 : 140} bg="$backgroundLight100">
+      <Box
+        width="100%"
+        height={
+          fillColumn ? masonryImageHeight ?? 128 : compact ? 100 : 140
+        }
+        bg="$backgroundLight100"
+      >
         {imgUrl ? (
           <Image
             source={{ uri: imgUrl }}
@@ -92,6 +133,14 @@ export default function PromotionCard({ doc, language, onPress, compact }: Promo
           </Box>
         )}
       </Box>
+
+      {showSocialBar ? (
+        <CardSocialActions
+          language={language}
+          shareMessage={title || cardSocial.brandShort}
+          shareUrl={doc._id ? SITE_PROMO_URLS.promotionDetail(doc._id) : undefined}
+        />
+      ) : null}
 
       <VStack p="$3" space="xs">
         {/* title / productName desde API */}
@@ -146,13 +195,19 @@ export default function PromotionCard({ doc, language, onPress, compact }: Promo
     </Box>
   );
 
+  const outerWidth = fillColumn ? ('100%' as const) : compact ? 160 : 280;
+
   if (onPress) {
     return (
-      <Pressable onPress={onPress} width={compact ? 160 : 280}>
+      <Pressable onPress={onPress} width={outerWidth} alignSelf={fillColumn ? 'stretch' : undefined}>
         {cardContent}
       </Pressable>
     );
   }
 
-  return <Box width={compact ? 160 : 280}>{cardContent}</Box>;
+  return (
+    <Box width={outerWidth} alignSelf={fillColumn ? 'stretch' : undefined}>
+      {cardContent}
+    </Box>
+  );
 }

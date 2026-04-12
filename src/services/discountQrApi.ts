@@ -7,6 +7,9 @@ export interface CreateDiscountQrRequest {
   referralCode: string;
   discountPercentage: number;
   walletAddress: string;
+  /** Posición del usuario al solicitar el cupón (validación GPS en servidor). */
+  clientLatitude?: number;
+  clientLongitude?: number;
 }
 
 export interface CreateDiscountQrResponse {
@@ -138,6 +141,8 @@ export async function createDiscountQrTokenGet(
       discountPercentage: String(params.discountPercentage),
       walletAddress: params.walletAddress,
     });
+    if (params.clientLatitude != null) q.set('clientLatitude', String(params.clientLatitude));
+    if (params.clientLongitude != null) q.set('clientLongitude', String(params.clientLongitude));
     const res = await fetch(`${API_BASE_URL}/discount-qr/create?${q}`, {
       method: 'GET',
       headers: { Accept: 'application/json' },

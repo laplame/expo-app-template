@@ -15,11 +15,13 @@ import DefiDealScreen from '../screens/DefiDealScreen';
 import MallOrderScreen from '../screens/MallOrderScreen';
 import InfluencerSearchScreen from '../screens/InfluencerSearchScreen';
 import InfluencersListScreen from '../screens/InfluencersListScreen';
+import NetworkP2PScreen from '../screens/NetworkP2PScreen';
 import CustomDrawerContent from '../components/CustomDrawerContent';
 import type { InfluencerPlatform } from '../services/influencersApi';
 
 export type RootStackParamList = {
-  Home: undefined;
+  /** scrollToPromotions: al abrir desde el menú “Cupones”, hace scroll al listado de promociones */
+  Home: { scrollToPromotions?: boolean } | undefined;
   Wallet: undefined;
   NYC: undefined;
   Settings: undefined;
@@ -30,6 +32,7 @@ export type RootStackParamList = {
   MallOrder: undefined;
   InfluencerSearch: { initialQuery?: string; platform?: InfluencerPlatform; imageUri?: string };
   InfluencersList: undefined;
+  NetworkP2P: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -117,6 +120,11 @@ function StackNavigator() {
         name="InfluencersList" 
         component={InfluencersListScreen}
         options={{ title: language === 'es' ? 'Influencers' : 'Influencers' }}
+      />
+      <Stack.Screen
+        name="NetworkP2P"
+        component={NetworkP2PScreen}
+        options={{ headerShown: false }}
       />
     </Stack.Navigator>
   );

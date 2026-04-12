@@ -2,16 +2,22 @@
  * Tarjeta compacta de influencer (para listados) o expandida (detalle).
  * Ref: assets/docs/buscarInfluencers.md
  */
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text, VStack, HStack, Pressable } from '@gluestack-ui/themed';
 import { Image, Linking, Alert, Pressable as RNPressable } from 'react-native';
 import type { InfluencerDoc, InfluencerFollowers } from '../services/influencersApi';
 import { resolveInfluencerImageUrl } from '../services/influencersApi';
+import CardSocialActions from './CardSocialActions';
+import { getCardSocialStrings } from '../i18n/uiStrings';
 
 interface InfluencerCardProps {
   influencer: InfluencerDoc;
   onPress?: () => void;
   compact?: boolean;
+  /** Feed tipo Pinterest: imagen arriba, texto apilado. */
+  variant?: 'default' | 'masonry';
+  /** En masonry: ancho/alto de la foto (variar por tarjeta para look orgánico). Por defecto ~0,82. */
+  masonryAspectRatio?: number;
   language?: 'en' | 'es';
   /** Votos totales del servidor (opcional); si no hay backend, se usa isVoted local */
   voteCount?: number;
@@ -111,12 +117,15 @@ export default function InfluencerCard({
   influencer,
   onPress,
   compact = true,
+  variant = 'default',
+  masonryAspectRatio = 0.82,
   language = 'es',
   voteCount,
   isVoted,
 }: InfluencerCardProps) {
   const displayName = influencer.displayName ?? influencer.name ?? '';
   const bio = (influencer.bio ?? '').slice(0, compact ? 80 : 200);
+  const masonryBio = (influencer.bio ?? '').slice(0, 100);
   const categories = influencer.categories ?? [];
   const totalFollowers = influencer.totalFollowers ?? 0;
   const mainSocial = getMainSocial(influencer.followers, influencer.socialMedia);
@@ -125,6 +134,7 @@ export default function InfluencerCard({
   const imageUrl = resolveInfluencerImageUrl(
     influencer.avatar ?? influencer.profileImageUrl
   );
+  const cardSocial = useMemo(() => getCardSocialStrings(language), [language]);
 
   const handleViewChannel = () => {
     if (!channelUrl) return;
@@ -146,6 +156,115 @@ export default function InfluencerCard({
       : displayVoteCount === 1
         ? '1 person wants their promotion'
         : `${displayVoteCount} people want their promotion`;
+
+  if (variant === 'masonry') {
+    const masonryContent = (
+      <Box
+        bg="$white"
+        borderRadius="$xl"
+        overflow="hidden"
+        borderWidth={1}
+        borderColor="$borderLight200"
+        width="100%"
+        shadowColor="$black"
+        shadowOffset={{ width: 0, height: 2 }}
+        shadowOpacity={0.08}
+        shadowRadius={4}
+        elevation={2}
+      >
+        {imageUrl ? (
+          <Image
+            source={{ uri: imageUrl }}
+            style={{ width: '100%', aspectRatio: masonryAspectRatio }}
+            resizeMode="cover"
+          />
+        ) : (
+          <Box
+            w="100%"
+            aspectRatio={masonryAspectRatio}
+            bg="$backgroundLight200"
+            alignItems="center"
+            justifyContent="center"
+          >
+            <Text fontSize="$6xl">👤</Text>
+          </Box>
+        )}
+        <CardSocialActions
+          language={language}
+          shareMessage={displayName ? `${displayName} · ${cardSocial.brandShort}` : cardSocial.brandShort}
+          shareUrl={channelUrl?.url}
+        />
+        <VStack p="$3" space="xs">
+          <Text fontSize="$md" fontWeight="$bold" color="#00704A" numberOfLines={2}>
+            {displayName}
+          </Text>
+          {(totalFollowers > 0 || mainSocial) && (
+            <HStack space="xs" alignItems="center" flexWrap="wrap">
+              {totalFollowers > 0 && (
+                <Text fontSize="$2xs" color="$textLight500" fontWeight="$medium">
+                  👥 {formatFollowers(totalFollowers)}
+                </Text>
+              )}
+              {mainSocial?.username ? (
+                <Text fontSize="$2xs" color="$textLight500" numberOfLines={1}>
+                  @{mainSocial.username.replace(/^@/, '')}
+                </Text>
+              ) : null}
+            </HStack>
+          )}
+          {influencer.location ? (
+            <Text fontSize="$2xs" color="$textLight500" numberOfLines={1}>
+              📍 {influencer.location}
+            </Text>
+          ) : null}
+          {masonryBio ? (
+            <Text fontSize="$xs" color="$textLight600" numberOfLines={3}>
+              {masonryBio}
+            </Text>
+          ) : null}
+          {categories.length > 0 && (
+            <HStack flexWrap="wrap" mt="$1" space="xs">
+              {categories.slice(0, 3).map((c) => (
+                <Box key={c} bg="$backgroundLight100" borderRadius="$full" px="$2" py="$0.5">
+                  <Text fontSize="$2xs" color="$textLight600">
+                    {c}
+                  </Text>
+                </Box>
+              ))}
+            </HStack>
+          )}
+          {channelUrl && (
+            <RNPressable
+              onPress={handleViewChannel}
+              style={({ pressed }) => ({
+                paddingVertical: 8,
+                paddingHorizontal: 0,
+                opacity: pressed ? 0.85 : 1,
+              })}
+              hitSlop={8}
+            >
+              <Text fontSize="$xs" color="#00704A" fontWeight="$semibold">
+                {language === 'es' ? `Ver canal · ${channelUrl.platform}` : `View channel · ${channelUrl.platform}`}
+              </Text>
+            </RNPressable>
+          )}
+          {(displayVoteCount > 0 || (voteCount === 0 && voteCount !== undefined)) && (
+            <Text fontSize="$2xs" color="$textLight500" numberOfLines={2}>
+              📊 {statsLabel}
+            </Text>
+          )}
+        </VStack>
+      </Box>
+    );
+    if (onPress) {
+      return (
+        <Pressable onPress={onPress} width="100%">
+          {masonryContent}
+        </Pressable>
+      );
+    }
+    return masonryContent;
+  }
 
   const content = (
     <Box

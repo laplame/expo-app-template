@@ -16,7 +16,13 @@ const KEYS = {
   DESPENSA_CART: '@link4deal/despensa_cart',
   INFLUENCER_VOTES: '@link4deal/influencer_votes',
   WALLET_DISCLOSURES_ACK: '@link4deal/wallet_disclosures_ack',
+  PAYMENT_LIMIT_LUXAE: '@link4deal/payment_limit_luxae',
+  /** Verificación KYB (negocio) aprobada; permite ver direcciones completas como el KYC. */
+  KYB_VERIFIED: '@link4deal/kyb_verified',
 } as const;
+
+/** Límite por defecto para un pago en LUXAE (configurable en Ajustes). */
+export const DEFAULT_PAYMENT_LIMIT_LUXAE = 20;
 
 export interface DespensaCart {
   storeId: string;
@@ -26,7 +32,13 @@ export interface DespensaCart {
 export type WalletAddressSource = 'metamask' | 'manual' | 'link4deal';
 
 /** ethereum / polygon: misma dirección EVM; polygon para MATIC y tokens en Polygon. */
-export type WalletChain = 'ethereum' | 'bitcoin' | 'polygon';
+export type WalletChain =
+  | 'ethereum'
+  | 'bitcoin'
+  | 'polygon'
+  | 'bitcoin-cash'
+  | 'ripple'
+  | 'solana';
 
 export interface WalletAddressItem {
   id: string;
@@ -68,6 +80,42 @@ export async function setKycForm(data: Record<string, string>): Promise<void> {
   } catch {
     // ignore
   }
+}
+
+/** KYC completo: datos mínimos del formulario NYC (nombre, nacimiento, teléfono). */
+export async function isKycComplete(): Promise<boolean> {
+  const k = await getKycForm();
+  const fullName = (k.fullName ?? '').trim();
+  const phone = (k.phone ?? '').trim();
+  const dob = (k.dateOfBirth ?? '').trim();
+  return Boolean(fullName && phone && dob);
+}
+
+export async function getKybVerified(): Promise<boolean> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.KYB_VERIFIED);
+    return v === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export async function setKybVerified(verified: boolean): Promise<void> {
+  try {
+    if (verified) {
+      await AsyncStorage.setItem(KEYS.KYB_VERIFIED, 'true');
+    } else {
+      await AsyncStorage.removeItem(KEYS.KYB_VERIFIED);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/** Mostrar dirección completa en UI solo tras KYC o KYB. */
+export async function canRevealWalletAddresses(): Promise<boolean> {
+  if (await getKybVerified()) return true;
+  return isKycComplete();
 }
 
 export async function getPromoSignupSeen(): Promise<boolean> {
@@ -306,6 +354,28 @@ export async function setWalletDisclosuresAck(ack: boolean): Promise<void> {
   }
 }
 
+/** Límite máximo de LUXAE por operación de pago (QR «Pagar»). */
+export async function getPaymentLimitLuxae(): Promise<number> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.PAYMENT_LIMIT_LUXAE);
+    if (v == null) return DEFAULT_PAYMENT_LIMIT_LUXAE;
+    const n = parseFloat(v);
+    if (!Number.isFinite(n) || n < 1) return DEFAULT_PAYMENT_LIMIT_LUXAE;
+    return Math.min(n, 1e9);
+  } catch {
+    return DEFAULT_PAYMENT_LIMIT_LUXAE;
+  }
+}
+
+export async function setPaymentLimitLuxae(amount: number): Promise<void> {
+  try {
+    const n = Math.max(1, Math.min(Math.floor(amount), 999999999));
+    await AsyncStorage.setItem(KEYS.PAYMENT_LIMIT_LUXAE, String(n));
+  } catch {
+    // ignore
+  }
+}
+
 /** Saldo del token LUXAE (recompensas; ERC-20 LXD en cadena). Bono de bienvenida al completar KYC. */
 export async function getLuxaeBalance(): Promise<number> {
   try {
@@ -381,6 +451,46 @@ export function isValidBtcAddress(address: string): boolean {
   return /^(1|3|bc1)[a-zA-HJ-NP-Z0-9]{25,62}$/.test(t);
 }
 
+/** Bitcoin Cash: CashAddr (q/p… o prefijo bitcoincash:) o legacy 1/3 (sin bc1). */
+export function isValidBchAddress(address: string): boolean {
+  const t = (address || '').trim();
+  const lower = t.toLowerCase();
+  if (/^bitcoincash:(q|p)[a-z0-9]{41}$/.test(lower)) return true;
+  if (/^(q|p)[a-z0-9]{41}$/i.test(t)) return true;
+  if (t.length < 26 || t.length > 35) return false;
+  return /^(1|3)[a-zA-HJ-NP-Z0-9]{25,34}$/.test(t);
+}
+
+/** XRP Ledger: cuenta clásica r… */
+export function isValidXrpAddress(address: string): boolean {
+  const t = (address || '').trim();
+  return /^r[1-9A-HJ-NP-Za-km-z]{24,34}$/.test(t);
+}
+
+/** Solana: cuenta base58 (pública típica 32–44 caracteres). */
+export function isValidSolanaAddress(address: string): boolean {
+  const t = (address || '').trim();
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(t);
+}
+
+function isValidAddressForChain(chain: WalletChain, trimmed: string): boolean {
+  switch (chain) {
+    case 'bitcoin':
+      return isValidBtcAddress(trimmed);
+    case 'bitcoin-cash':
+      return isValidBchAddress(trimmed);
+    case 'ripple':
+      return isValidXrpAddress(trimmed);
+    case 'solana':
+      return isValidSolanaAddress(trimmed);
+    case 'ethereum':
+    case 'polygon':
+      return isValidEvmAddress(trimmed);
+    default:
+      return false;
+  }
+}
+
 export async function addWalletAddress(
   address: string,
   source: WalletAddressSource,
@@ -388,18 +498,14 @@ export async function addWalletAddress(
   chain: WalletChain = 'ethereum'
 ): Promise<WalletAddressItem | null> {
   const trimmed = address.trim();
-  if (chain === 'bitcoin') {
-    if (!isValidBtcAddress(trimmed)) return null;
-  } else {
-    if (!isValidEvmAddress(trimmed)) return null;
-  }
+  if (!isValidAddressForChain(chain, trimmed)) return null;
   const list = await getWalletAddresses();
   const sameChain = list.filter((w) => (w.chain ?? 'ethereum') === chain);
-  if (chain === 'bitcoin') {
-    if (sameChain.some((w) => w.address.trim() === trimmed)) return null;
-  } else {
-    if (sameChain.some((w) => w.address.toLowerCase() === trimmed.toLowerCase())) return null;
-  }
+  const isDuplicate =
+    chain === 'ethereum' || chain === 'polygon'
+      ? sameChain.some((w) => w.address.toLowerCase() === trimmed.toLowerCase())
+      : sameChain.some((w) => w.address.trim() === trimmed);
+  if (isDuplicate) return null;
   const isFirst = list.length === 0;
   const item: WalletAddressItem = {
     id: `wallet_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,

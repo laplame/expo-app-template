@@ -16,13 +16,15 @@ interface DrawerItem {
 
 const drawerItems: DrawerItem[] = [
   { id: '1', titleEn: 'Home', titleEs: 'Inicio', screen: 'Home', icon: '🏠' },
+  { id: '1b', titleEn: 'Coupons', titleEs: 'Cupones', screen: 'Home', params: { scrollToPromotions: true }, icon: '🎟️' },
   { id: '2', titleEn: 'Mall & Order', titleEs: 'Tienda · Pedir', screen: 'MallOrder', icon: '🛒' },
   { id: '3', titleEn: 'Wallet', titleEs: 'Billetera', screen: 'Wallet', icon: '💳' },
   { id: '4', titleEn: 'Defi.Deal', titleEs: 'Defi.Deal', screen: 'DefiDeal', icon: '📖' },
-  { id: '5', titleEn: 'Coupons & Promotions', titleEs: 'Cupones y promociones', screen: 'PromotionsMap', icon: '🎫' },
+  { id: '5', titleEn: 'Promotions map', titleEs: 'Mapa de promociones', screen: 'PromotionsMap', icon: '🗺️' },
   { id: '6', titleEn: 'NYC (Know Your Client)', titleEs: 'NYC (Conoce a tu cliente)', screen: 'NYC', icon: '👤' },
   { id: '7', titleEn: 'Upload promotion', titleEs: 'Subir promoción', screen: 'UploadPromotions', icon: '📤' },
   { id: '8', titleEn: 'Influencers & Vote', titleEs: 'Influencers y votar', screen: 'InfluencersList', icon: '⭐' },
+  { id: '8p2p', titleEn: 'Network P2P (Nostr)', titleEs: 'Red P2P (Nostr)', screen: 'NetworkP2P', icon: '📡' },
   { id: '9', titleEn: 'Settings', titleEs: 'Configuración', screen: 'Settings', icon: '⚙️' },
 ];
 
