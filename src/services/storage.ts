@@ -13,16 +13,138 @@ const KEYS = {
   WELCOME_BONUS_GRANTED: '@link4deal/welcome_bonus_granted',
   THREE_FIELDS_BONUS_GRANTED: '@link4deal/three_fields_bonus_granted',
   USER_ID: '@link4deal/user_id',
+  AUTH_ACCESS_TOKEN: '@link4deal/auth_access_token',
+  AUTH_REFRESH_TOKEN: '@link4deal/auth_refresh_token',
   DESPENSA_CART: '@link4deal/despensa_cart',
   INFLUENCER_VOTES: '@link4deal/influencer_votes',
+  /** Contadores locales de “quiero su promoción” por influencer (complementa API). */
+  INFLUENCER_VOTE_TALLIES: '@link4deal/influencer_vote_tallies',
+  /** Caché del perfil influencer vinculado (GET /me) para el panel en app. */
+  INFLUENCER_SESSION_CACHE: '@link4deal/influencer_session_cache',
   WALLET_DISCLOSURES_ACK: '@link4deal/wallet_disclosures_ack',
   PAYMENT_LIMIT_LUXAE: '@link4deal/payment_limit_luxae',
+  /** Historial local LUXAE (ingresos, pagos, redenciones, fidelidad). */
+  WALLET_LEDGER: '@link4deal/wallet_ledger',
+  /** Preferencias de UI: sobreviven al cerrar la app (AsyncStorage; no al desinstalar salvo respaldo del SO). */
+  SETTINGS_LANGUAGE: '@link4deal/settings_language',
+  SETTINGS_CURRENCY: '@link4deal/settings_currency',
+  SETTINGS_COLOR_SCHEME: '@link4deal/settings_color_scheme',
+  SETTINGS_APP_BACKGROUND_URI: '@link4deal/settings_app_background_uri',
   /** Verificación KYB (negocio) aprobada; permite ver direcciones completas como el KYC. */
   KYB_VERIFIED: '@link4deal/kyb_verified',
 } as const;
 
+const WHATSAPP_KYC_REQUIRED = process.env.EXPO_PUBLIC_KYC_WHATSAPP_REQUIRED === 'true';
+
 /** Límite por defecto para un pago en LUXAE (configurable en Ajustes). */
 export const DEFAULT_PAYMENT_LIMIT_LUXAE = 20;
+
+export type StoredUiLanguage = 'en' | 'es';
+export type StoredUiCurrency = 'USD' | 'MXN';
+/** Tema de entorno (colores del sistema en app). */
+export type StoredAppTheme =
+  | 'gold'
+  | 'dark'
+  | 'light'
+  | 'forest'
+  | 'ocean'
+  | 'sunset'
+  | 'violet'
+  | 'midnight';
+
+/** @deprecated Use StoredAppTheme */
+export type StoredColorScheme = StoredAppTheme;
+
+export async function getSettingsLanguage(): Promise<StoredUiLanguage | null> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.SETTINGS_LANGUAGE);
+    if (v === 'en' || v === 'es') return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setSettingsLanguage(lang: StoredUiLanguage): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.SETTINGS_LANGUAGE, lang);
+  } catch {
+    // ignore
+  }
+}
+
+export async function getSettingsCurrency(): Promise<StoredUiCurrency | null> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.SETTINGS_CURRENCY);
+    if (v === 'USD' || v === 'MXN') return v;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setSettingsCurrency(curr: StoredUiCurrency): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.SETTINGS_CURRENCY, curr);
+  } catch {
+    // ignore
+  }
+}
+
+export async function getSettingsAppTheme(): Promise<StoredAppTheme | null> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.SETTINGS_COLOR_SCHEME);
+    const allowed: StoredAppTheme[] = [
+      'gold',
+      'dark',
+      'light',
+      'forest',
+      'ocean',
+      'sunset',
+      'violet',
+      'midnight',
+    ];
+    if (v && (allowed as string[]).includes(v)) return v as StoredAppTheme;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setSettingsAppTheme(theme: StoredAppTheme): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.SETTINGS_COLOR_SCHEME, theme);
+  } catch {
+    // ignore
+  }
+}
+
+/** @deprecated Use getSettingsAppTheme */
+export async function getSettingsColorScheme(): Promise<StoredColorScheme | null> {
+  return getSettingsAppTheme();
+}
+
+/** @deprecated Use setSettingsAppTheme */
+export async function setSettingsColorScheme(scheme: StoredColorScheme): Promise<void> {
+  return setSettingsAppTheme(scheme);
+}
+
+export async function getSettingsAppBackgroundUri(): Promise<string | null> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.SETTINGS_APP_BACKGROUND_URI);
+    return v && v.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setSettingsAppBackgroundUri(uri: string): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.SETTINGS_APP_BACKGROUND_URI, uri.trim());
+  } catch {
+    // ignore
+  }
+}
 
 export interface DespensaCart {
   storeId: string;
@@ -55,6 +177,12 @@ export interface PreferredMall {
   id: string;
   name: string;
   nameEs?: string;
+  /** Lista mock cercana vs catálogo BizneAI (cafés / programa 10=1). */
+  source?: 'nearby_mock' | 'bizneai';
+  fullAddress?: string;
+  latitude?: number;
+  longitude?: number;
+  bizneStoreType?: string;
 }
 
 export interface QuickProfile {
@@ -82,13 +210,16 @@ export async function setKycForm(data: Record<string, string>): Promise<void> {
   }
 }
 
-/** KYC completo: datos mínimos del formulario NYC (nombre, nacimiento, teléfono). */
+/** KYC completo: datos mínimos; WhatsApp OTP se exige solo cuando hay proveedor configurado. */
 export async function isKycComplete(): Promise<boolean> {
   const k = await getKycForm();
   const fullName = (k.fullName ?? '').trim();
   const phone = (k.phone ?? '').trim();
   const dob = (k.dateOfBirth ?? '').trim();
-  return Boolean(fullName && phone && dob);
+  const hasMinimumKyc = Boolean(fullName && phone && dob);
+  if (!WHATSAPP_KYC_REQUIRED) return hasMinimumKyc;
+  const whatsappVerified = k.phoneWhatsappVerified === 'true';
+  return Boolean(hasMinimumKyc && whatsappVerified);
 }
 
 export async function getKybVerified(): Promise<boolean> {
@@ -248,6 +379,50 @@ export async function getQuickProfile(): Promise<QuickProfile | null> {
   }
 }
 
+export async function getAuthAccessToken(): Promise<string | null> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.AUTH_ACCESS_TOKEN);
+    return v?.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAuthRefreshToken(): Promise<string | null> {
+  try {
+    const v = await AsyncStorage.getItem(KEYS.AUTH_REFRESH_TOKEN);
+    return v?.trim() ? v.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setAuthTokens(accessToken: string | null, refreshToken?: string | null): Promise<void> {
+  try {
+    if (accessToken?.trim()) {
+      await AsyncStorage.setItem(KEYS.AUTH_ACCESS_TOKEN, accessToken.trim());
+    } else {
+      await AsyncStorage.removeItem(KEYS.AUTH_ACCESS_TOKEN);
+    }
+    if (refreshToken === undefined) return;
+    if (refreshToken?.trim()) {
+      await AsyncStorage.setItem(KEYS.AUTH_REFRESH_TOKEN, refreshToken.trim());
+    } else {
+      await AsyncStorage.removeItem(KEYS.AUTH_REFRESH_TOKEN);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export async function clearAuthTokens(): Promise<void> {
+  try {
+    await AsyncStorage.multiRemove([KEYS.AUTH_ACCESS_TOKEN, KEYS.AUTH_REFRESH_TOKEN]);
+  } catch {
+    // ignore
+  }
+}
+
 /** true si el usuario tiene registro básico (QuickProfile o KYC) para recompensas en token LUXAE por influencer */
 export async function hasBasicRegistration(): Promise<boolean> {
   const quick = await getQuickProfile();
@@ -268,28 +443,147 @@ export async function setQuickProfile(profile: QuickProfile | null): Promise<voi
   }
 }
 
+export interface InfluencerVoteTallies {
+  [influencerId: string]: number;
+}
+
 /** IDs de influencers por los que el usuario votó (quiero promoción de este influencer). */
 export async function getInfluencerVotes(): Promise<string[]> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.INFLUENCER_VOTES);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (Array.isArray(parsed)) return parsed.filter((id) => typeof id === 'string');
+    if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { votedIds?: string[] }).votedIds)) {
+      return (parsed as { votedIds: string[] }).votedIds;
+    }
+    return [];
   } catch {
     return [];
   }
 }
 
-export async function setInfluencerVote(influencerId: string, voted: boolean): Promise<void> {
+/** Contadores guardados en el dispositivo (personas que quieren promoción). */
+export async function getInfluencerVoteTallies(): Promise<InfluencerVoteTallies> {
   try {
-    const current = await getInfluencerVotes();
-    const next = voted
-      ? (current.includes(influencerId) ? current : [...current, influencerId])
-      : current.filter((id) => id !== influencerId);
-    await AsyncStorage.setItem(KEYS.INFLUENCER_VOTES, JSON.stringify(next));
+    const raw = await AsyncStorage.getItem(KEYS.INFLUENCER_VOTE_TALLIES);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as InfluencerVoteTallies;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: InfluencerVoteTallies = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const n = typeof v === 'number' ? v : parseInt(String(v), 10);
+      if (Number.isFinite(n) && n >= 0) out[k] = n;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+async function setInfluencerVoteTallies(tallies: InfluencerVoteTallies): Promise<void> {
+  try {
+    await AsyncStorage.setItem(KEYS.INFLUENCER_VOTE_TALLIES, JSON.stringify(tallies));
   } catch {
     // ignore
   }
+}
+
+/**
+ * Registra o quita voto y actualiza contador local.
+ * @returns Nuevo total mostrable para ese influencer.
+ */
+export async function setInfluencerVote(
+  influencerId: string,
+  voted: boolean,
+  options?: { serverBaseline?: number }
+): Promise<{ votedIds: string[]; displayCount: number }> {
+  const baseline = Math.max(0, options?.serverBaseline ?? 0);
+  try {
+    const current = await getInfluencerVotes();
+    const tallies = await getInfluencerVoteTallies();
+    const wasVoted = current.includes(influencerId);
+    let count = tallies[influencerId] ?? baseline;
+
+    const nextIds = voted
+      ? wasVoted
+        ? current
+        : [...current, influencerId]
+      : current.filter((id) => id !== influencerId);
+
+    if (voted && !wasVoted) {
+      count = Math.max(count, baseline) + 1;
+    } else if (!voted && wasVoted) {
+      count = Math.max(baseline, count - 1);
+    }
+
+    tallies[influencerId] = count;
+    await AsyncStorage.setItem(KEYS.INFLUENCER_VOTES, JSON.stringify(nextIds));
+    await setInfluencerVoteTallies(tallies);
+    return { votedIds: nextIds, displayCount: count };
+  } catch {
+    return { votedIds: await getInfluencerVotes(), displayCount: baseline };
+  }
+}
+
+/** Sincroniza contadores con datos del API sin bajar totales ya guardados. */
+export async function mergeInfluencerVoteTalliesFromServer(
+  items: { id: string; serverCount?: number }[]
+): Promise<InfluencerVoteTallies> {
+  const tallies = await getInfluencerVoteTallies();
+  let changed = false;
+  for (const { id, serverCount } of items) {
+    if (!id) continue;
+    const base = Math.max(0, serverCount ?? 0);
+    const prev = tallies[id];
+    if (prev == null || prev < base) {
+      tallies[id] = Math.max(prev ?? 0, base);
+      changed = true;
+    }
+  }
+  if (changed) await setInfluencerVoteTallies(tallies);
+  return tallies;
+}
+
+export interface InfluencerSessionCache {
+  savedAt: number;
+  influencerId?: string;
+  publicSlug?: string;
+  displayName?: string;
+}
+
+export async function getInfluencerSessionCache(): Promise<InfluencerSessionCache | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.INFLUENCER_SESSION_CACHE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as InfluencerSessionCache;
+    return parsed?.savedAt ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setInfluencerSessionCache(cache: InfluencerSessionCache | null): Promise<void> {
+  try {
+    if (!cache) {
+      await AsyncStorage.removeItem(KEYS.INFLUENCER_SESSION_CACHE);
+      return;
+    }
+    await AsyncStorage.setItem(KEYS.INFLUENCER_SESSION_CACHE, JSON.stringify(cache));
+  } catch {
+    // ignore
+  }
+}
+
+export function resolveInfluencerDisplayVoteCount(
+  influencerId: string,
+  tallies: InfluencerVoteTallies,
+  serverCount?: number
+): number {
+  const base = Math.max(0, serverCount ?? 0);
+  const local = tallies[influencerId];
+  if (local != null) return Math.max(local, base);
+  return base;
 }
 
 /** Promociones en caché local; se actualizan al abrir la app */
@@ -376,7 +670,7 @@ export async function setPaymentLimitLuxae(amount: number): Promise<void> {
   }
 }
 
-/** Saldo del token LUXAE (recompensas; ERC-20 LXD en cadena). Bono de bienvenida al completar KYC. */
+/** Saldo del token LUXAE en disco (AsyncStorage); sobrevive al cerrar la app. Desinstalar la app suele borrar estos datos salvo respaldo automático del sistema. */
 export async function getLuxaeBalance(): Promise<number> {
   try {
     const v = await AsyncStorage.getItem(KEYS.LUXAE_BALANCE);
@@ -435,6 +729,70 @@ export async function setThreeFieldsBonusGranted(granted: boolean): Promise<void
     } else {
       await AsyncStorage.removeItem(KEYS.THREE_FIELDS_BONUS_GRANTED);
     }
+  } catch {
+    // ignore
+  }
+}
+
+const WALLET_LEDGER_MAX = 500;
+
+export type WalletLedgerKind = 'income' | 'payment' | 'redemption' | 'loyalty';
+
+export interface WalletLedgerEntry {
+  id: string;
+  kind: WalletLedgerKind;
+  /** LUXAE: positivo ingreso; negativo cargo (pago/redención con coste en token). 0 si solo informativo (p. ej. fidelidad). */
+  amountLuxae: number;
+  titleEs: string;
+  titleEn: string;
+  details?: string;
+  createdAt: number;
+}
+
+export async function getWalletLedger(): Promise<WalletLedgerEntry[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.WALLET_LEDGER);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const rows = parsed.filter((row): row is WalletLedgerEntry => {
+      if (!row || typeof row !== 'object') return false;
+      const r = row as WalletLedgerEntry;
+      const k = r.kind;
+      return (
+        typeof r.id === 'string' &&
+        (k === 'income' || k === 'payment' || k === 'redemption' || k === 'loyalty') &&
+        typeof r.amountLuxae === 'number' &&
+        Number.isFinite(r.amountLuxae) &&
+        typeof r.titleEs === 'string' &&
+        typeof r.titleEn === 'string' &&
+        typeof r.createdAt === 'number' &&
+        Number.isFinite(r.createdAt)
+      );
+    });
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+export async function appendWalletLedgerEntry(
+  entry: Omit<WalletLedgerEntry, 'id' | 'createdAt'> & { id?: string; createdAt?: number }
+): Promise<void> {
+  try {
+    const prev = await getWalletLedger();
+    const row: WalletLedgerEntry = {
+      id: entry.id ?? `wl_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      kind: entry.kind,
+      amountLuxae: entry.amountLuxae,
+      titleEs: entry.titleEs,
+      titleEn: entry.titleEn,
+      details: entry.details,
+      createdAt: entry.createdAt ?? Date.now(),
+    };
+    const next = [row, ...prev.filter((p) => p.id !== row.id)].slice(0, WALLET_LEDGER_MAX);
+    await AsyncStorage.setItem(KEYS.WALLET_LEDGER, JSON.stringify(next));
   } catch {
     // ignore
   }

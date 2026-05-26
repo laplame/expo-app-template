@@ -1,4 +1,15 @@
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://damecodigo.com/api';
+function trimTrailingSlash(value: string): string {
+  return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+function getApiBase(): string {
+  const env = process.env.EXPO_PUBLIC_API_URL?.trim();
+  const rawBase = trimTrailingSlash(env || 'https://www.damecodigo.com/api');
+  const withWww = rawBase.replace(/^https:\/\/damecodigo\.com(?=\/|$)/i, 'https://www.damecodigo.com');
+  return withWww.endsWith('/api') ? withWww : `${withWww}/api`;
+}
+
+const API_BASE_URL = getApiBase();
 
 export interface CreateDiscountQrRequest {
   deviceId: string;
@@ -16,8 +27,12 @@ export interface CreateDiscountQrResponse {
   ok: boolean;
   qrValue?: string;
   prefix?: string;
+  /** Mismo valor que env / web (`QR_PREFIX`); sin `-N`. */
+  basePrefix?: string;
   version?: string;
   ttlSeconds?: number;
+  /** Entero 0–100; igual que `discountPercentage` y el `-N` del prefijo (nombre histórico en API). */
+  luxaesRedeemed?: number;
   message?: string;
   fallback?: boolean;
   /** Si es true, no hay QR; la app debe redirigir a redirectToUrl (promoción con link). */
@@ -62,11 +77,20 @@ async function parseJsonSafe(res: Response): Promise<any> {
   }
 }
 
+/**
+ * Respaldo offline alineado a la web: con % > 0 el prefijo incluye `-N` y el segmento local
+ * reutiliza el código de referido L4D (mismo criterio que CouponRequestForm).
+ */
 function buildLocalFallbackQr(payload: CreateDiscountQrRequest): string {
-  const short = `${payload.promotionId}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+  const pct = Math.max(0, Math.min(100, Math.floor(Number(payload.discountPercentage) || 0)));
+  const ref = (payload.referralCode ?? '')
     .replace(/[^a-zA-Z0-9-]/g, '')
-    .slice(0, 36);
-  return `LINK4DEAL-DISCOUNT.local.${short}`;
+    .trim();
+  const refSeg = ref || `P${payload.promotionId}`.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
+  if (pct > 0) {
+    return `LINK4DEAL-DISCOUNT-${pct}.local.${refSeg}`;
+  }
+  return `LINK4DEAL-DISCOUNT.local.${refSeg}`;
 }
 
 function shouldFallbackOnBackendError(status: number, message?: string): boolean {
@@ -79,11 +103,14 @@ function handleCreateResponse(res: Response, json: any, payload: CreateDiscountQ
   if (!res.ok) {
     const backendMessage = json?.message ?? `HTTP ${res.status}`;
     if (shouldFallbackOnBackendError(res.status, backendMessage)) {
+      const pct = Math.max(0, Math.min(100, Math.floor(Number(payload.discountPercentage) || 0)));
       return {
         ok: true,
         fallback: true,
         qrValue: buildLocalFallbackQr(payload),
-        prefix: 'LINK4DEAL-DISCOUNT',
+        prefix: pct > 0 ? `LINK4DEAL-DISCOUNT-${pct}` : 'LINK4DEAL-DISCOUNT',
+        basePrefix: 'LINK4DEAL-DISCOUNT',
+        luxaesRedeemed: pct,
         version: 'local',
         ttlSeconds: 120,
         message: 'Error conectando con backend QR. Se mostró un QR local de respaldo.',
@@ -91,12 +118,19 @@ function handleCreateResponse(res: Response, json: any, payload: CreateDiscountQ
     }
     return { ok: false, message: backendMessage };
   }
+  const ttl = Number(json?.ttlSeconds ?? 0);
+  const lux = json?.luxaesRedeemed;
   return {
     ok: !!json?.ok,
     qrValue: json?.qrValue,
     prefix: json?.prefix,
+    basePrefix: typeof json?.basePrefix === 'string' ? json.basePrefix : undefined,
     version: json?.version,
-    ttlSeconds: Number(json?.ttlSeconds ?? 0) || undefined,
+    ttlSeconds: ttl > 0 ? ttl : undefined,
+    luxaesRedeemed: (() => {
+      const n = Number(lux);
+      return Number.isFinite(n) ? n : undefined;
+    })(),
     message: json?.message,
     fallback: false,
     noQr: !!json?.noQr,
@@ -116,11 +150,14 @@ export async function createDiscountQrToken(
     const json = await parseJsonSafe(res);
     return handleCreateResponse(res, json, payload);
   } catch (e: any) {
+    const pct = Math.max(0, Math.min(100, Math.floor(Number(payload.discountPercentage) || 0)));
     return {
       ok: true,
       fallback: true,
       qrValue: buildLocalFallbackQr(payload),
-      prefix: 'LINK4DEAL-DISCOUNT',
+      prefix: pct > 0 ? `LINK4DEAL-DISCOUNT-${pct}` : 'LINK4DEAL-DISCOUNT',
+      basePrefix: 'LINK4DEAL-DISCOUNT',
+      luxaesRedeemed: pct,
       version: 'local',
       ttlSeconds: 120,
       message: 'Error conectando con backend QR. Se mostró un QR local de respaldo.',
@@ -150,11 +187,14 @@ export async function createDiscountQrTokenGet(
     const json = await parseJsonSafe(res);
     return handleCreateResponse(res, json, params);
   } catch (e: any) {
+    const pct = Math.max(0, Math.min(100, Math.floor(Number(params.discountPercentage) || 0)));
     return {
       ok: true,
       fallback: true,
       qrValue: buildLocalFallbackQr(params),
-      prefix: 'LINK4DEAL-DISCOUNT',
+      prefix: pct > 0 ? `LINK4DEAL-DISCOUNT-${pct}` : 'LINK4DEAL-DISCOUNT',
+      basePrefix: 'LINK4DEAL-DISCOUNT',
+      luxaesRedeemed: pct,
       version: 'local',
       ttlSeconds: 120,
       message: 'Error conectando con backend QR. Se mostró un QR local de respaldo.',

@@ -13,7 +13,7 @@ import {
   Pressable,
 } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
-import { Modal, View, Alert } from 'react-native';
+import { Modal, View, Alert, Linking } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { useSettings } from '../context/SettingsContext';
 import { useVerificationAccess } from '../context/VerificationAccessContext';
@@ -34,8 +34,9 @@ import {
   isValidBchAddress,
   isValidXrpAddress,
   isValidSolanaAddress,
+  getWalletLedger,
 } from '../services/storage';
-import type { WalletChain } from '../services/storage';
+import type { WalletChain, WalletLedgerEntry } from '../services/storage';
 import { getEthBalance } from '../services/ethRpc';
 import { getBtcBalance } from '../services/btcRpc';
 import { getBchBalance } from '../services/bchRpc';
@@ -45,6 +46,7 @@ import { getMaticBalance } from '../services/polygonRpc';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
 import { formatAddressForUi } from '../utils/addressDisplay';
 import { getWalletScreenStrings } from '../i18n/uiStrings';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 function formatCrypto(amount: number, decimals = 6): string {
   return new Intl.NumberFormat('en-US', {
@@ -53,8 +55,32 @@ function formatCrypto(amount: number, decimals = 6): string {
   }).format(amount);
 }
 
+function ledgerKindBadgeColor(kind: WalletLedgerEntry['kind']): string {
+  switch (kind) {
+    case 'income':
+      return '#166534';
+    case 'payment':
+      return '#9A3412';
+    case 'redemption':
+      return '#6B21A8';
+    default:
+      return '#1D4ED8';
+  }
+}
+
+/** Enlaces genéricos a intercambio (servicios externos; no afiliación). */
+const SWAP_URL_BY_COIN_ID: Record<string, string> = {
+  luxae: 'https://quickswap.exchange/#/swap',
+  ethereum: 'https://app.uniswap.org/',
+  bitcoin: 'https://simpleswap.io/',
+  'bitcoin-cash': 'https://simpleswap.io/',
+  ripple: 'https://simpleswap.io/',
+  solana: 'https://jup.ag/swap',
+};
+
 export default function WalletScreen() {
   const { language, currency } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
   const { revealWalletAddresses, refreshVerificationAccess } = useVerificationAccess();
   const { notifyWalletScreenFocused } = useWalletDisclosure();
   const {
@@ -63,6 +89,8 @@ export default function WalletScreen() {
     refetch,
     pricesForCalculation,
     luxaeBalance,
+    refreshLuxaeBalance,
+    luxaeHydrated,
   } = useWalletBalance();
 
   const [defaultAddress, setDefaultAddress] = useState<string | null>(null);
@@ -94,7 +122,9 @@ export default function WalletScreen() {
     address: string | null;
     chainLabel: string;
     initialIntent: 'pay' | 'receive';
-  }>({ visible: false, address: null, chainLabel: '', initialIntent: 'receive' });
+  }>({ visible: false, address: null, chainLabel: '', initialIntent: 'pay' });
+
+  const [ledgerEntries, setLedgerEntries] = useState<WalletLedgerEntry[]>([]);
 
   const loadWalletAndBalance = useCallback(async () => {
     const list = await getWalletAddresses();
@@ -181,15 +211,51 @@ export default function WalletScreen() {
     }
   }, []);
 
+  const loadLedger = useCallback(async () => {
+    setLedgerEntries(await getWalletLedger());
+  }, []);
+
   useFocusEffect(
     useCallback(() => {
       refreshVerificationAccess();
       notifyWalletScreenFocused();
+      refreshLuxaeBalance().catch(() => {});
       loadWalletAndBalance();
-    }, [loadWalletAndBalance, notifyWalletScreenFocused, refreshVerificationAccess])
+      loadLedger();
+    }, [
+      loadWalletAndBalance,
+      loadLedger,
+      notifyWalletScreenFocused,
+      refreshVerificationAccess,
+      refreshLuxaeBalance,
+    ])
   );
 
   const t = useMemo(() => getWalletScreenStrings(language, currency), [language, currency]);
+
+  const luxaeQrAddress = defaultAddress ?? polygonAddress;
+
+  const handleOpenSwap = useCallback(
+    (coinId: string) => {
+      const url = SWAP_URL_BY_COIN_ID[coinId];
+      if (!url) {
+        Alert.alert(t.swapCta, t.swapUnavailable);
+        return;
+      }
+      Alert.alert(t.swapCta, t.swapExternalHint, [
+        { text: language === 'es' ? 'Cancelar' : 'Cancel', style: 'cancel' },
+        {
+          text: language === 'es' ? 'Abrir' : 'Open',
+          onPress: () => {
+            Linking.openURL(url).catch(() => {
+              Alert.alert(t.swapCta, t.swapUnavailable);
+            });
+          },
+        },
+      ]);
+    },
+    [language, t]
+  );
 
   const ethPriceUsd = pricesForCalculation.ethereum?.usd ?? 0;
   const maticPriceUsd = pricesForCalculation['matic-network']?.usd ?? 0;
@@ -332,7 +398,7 @@ export default function WalletScreen() {
       <ScrollView flex={1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
         <VStack space="lg">
           {/* Total - same source as index (WalletBalanceContext) */}
-          <Box bg="#00704A" borderRadius="$xl" p="$5">
+          <Box bg={brand} borderRadius="$xl" p="$5">
             <Text fontSize="$lg" color="$white" opacity={0.9}>
               {t.totalLabel}
             </Text>
@@ -385,18 +451,21 @@ export default function WalletScreen() {
                   (coin.id === 'solana' && loadingSol);
                 const canAdd = 'canAddAddress' in coin && coin.canAddAddress;
                 const chain = 'chain' in coin ? coin.chain : null;
+                const luxaePending = coin.id === 'luxae' && !luxaeHydrated;
                 const coinAddress =
-                  coin.id === 'ethereum'
-                    ? defaultAddress
-                    : coin.id === 'bitcoin'
-                      ? btcAddress
-                      : coin.id === 'bitcoin-cash'
-                        ? bchAddress
-                        : coin.id === 'ripple'
-                          ? xrpAddress
-                          : coin.id === 'solana'
-                            ? solAddress
-                            : null;
+                  coin.id === 'luxae'
+                    ? luxaeQrAddress
+                    : coin.id === 'ethereum'
+                      ? defaultAddress
+                      : coin.id === 'bitcoin'
+                        ? btcAddress
+                        : coin.id === 'bitcoin-cash'
+                          ? bchAddress
+                          : coin.id === 'ripple'
+                            ? xrpAddress
+                            : coin.id === 'solana'
+                              ? solAddress
+                              : null;
                 return (
                   <Box
                     key={coin.id}
@@ -404,7 +473,7 @@ export default function WalletScreen() {
                     borderRadius="$lg"
                     p="$4"
                     borderLeftWidth={4}
-                    borderLeftColor="#00704A"
+                    borderLeftColor={brand}
                   >
                     <HStack justifyContent="space-between" alignItems="center" flexWrap="wrap">
                       <VStack space="xs" flex={1}>
@@ -422,7 +491,8 @@ export default function WalletScreen() {
                           </Text>
                         ) : null}
                         <Text fontSize="$sm" color="$textLight600">
-                          {coin.symbol} {isLoadingCoin ? '…' : formatCrypto(coin.balance)}
+                          {coin.symbol}{' '}
+                          {luxaePending || isLoadingCoin ? '…' : formatCrypto(coin.balance)}
                         </Text>
                         {canAdd && chain && (
                           <Pressable
@@ -436,7 +506,7 @@ export default function WalletScreen() {
                               })
                             }
                           >
-                            <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                            <Text fontSize="$xs" color={brand} fontWeight="$medium">
                               + {t.addAddress}
                             </Text>
                           </Pressable>
@@ -450,19 +520,30 @@ export default function WalletScreen() {
                                 visible: true,
                                 address: coinAddress,
                                 chainLabel: coin.name,
-                                initialIntent: 'receive',
+                                initialIntent: 'pay',
                               })
                             }
                           >
-                            <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                            <Text fontSize="$xs" color={brand} fontWeight="$medium">
                               {t.payReceiveQr}
                             </Text>
                           </Pressable>
                         ) : null}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          mt="$2"
+                          alignSelf="stretch"
+                          borderColor={brand}
+                          onPress={() => handleOpenSwap(coin.id)}
+                        >
+                          <ButtonText color={brand}>{t.swapCta}</ButtonText>
+                        </Button>
                       </VStack>
                       <VStack space="xs" alignItems="flex-end">
-                        <Text fontSize="$md" fontWeight="$semibold" color="#00704A">
-                          {t.valueLabel}: {isLoadingCoin ? '…' : formatMoney(valueDisplay, currency)}
+                        <Text fontSize="$md" fontWeight="$semibold" color={brand}>
+                          {t.valueLabel}:{' '}
+                          {luxaePending || isLoadingCoin ? '…' : formatMoney(valueDisplay, currency)}
                         </Text>
                         <Text fontSize="$xs" color="$textLight500">
                           {t.priceLabel}: {formatMoney(priceDisplay, currency)} / {coin.symbol}
@@ -478,16 +559,77 @@ export default function WalletScreen() {
           {/* Wallet addresses (MetaMask + manual); al conectar recargamos saldo ETH */}
           <WalletAddressSection language={language} onAddressesChange={loadWalletAndBalance} />
 
-          {/* Recent activity */}
+          {/* Historial LUXAE (ingresos, pagos, redenciones, fidelidad) */}
           <VStack space="sm">
             <Text fontSize="$xl" fontWeight="$bold" color="$textLight900">
-              {t.recent}
+              {t.ledgerSectionTitle}
             </Text>
-            <Box bg="$backgroundLight100" borderRadius="$lg" p="$6" alignItems="center">
-              <Text fontSize="$sm" color="$textLight500">
-                {t.empty}
-              </Text>
-            </Box>
+            <Text fontSize="$xs" color="$textLight500" mb="$1">
+              {t.ledgerSectionHint}
+            </Text>
+            {ledgerEntries.length === 0 ? (
+              <Box bg="$backgroundLight100" borderRadius="$lg" p="$6" alignItems="center">
+                <Text fontSize="$sm" color="$textLight500">
+                  {t.empty}
+                </Text>
+              </Box>
+            ) : (
+              <VStack space="sm">
+                {ledgerEntries.map((row) => {
+                  const title = language === 'es' ? row.titleEs : row.titleEn;
+                  const kindLabel =
+                    row.kind === 'income'
+                      ? t.ledgerKindIncome
+                      : row.kind === 'payment'
+                        ? t.ledgerKindPayment
+                        : row.kind === 'redemption'
+                          ? t.ledgerKindRedemption
+                          : t.ledgerKindLoyalty;
+                  const when = new Date(row.createdAt).toLocaleString(
+                    language === 'es' ? 'es-MX' : 'en-US',
+                    { dateStyle: 'short', timeStyle: 'short' }
+                  );
+                  const amt =
+                    row.amountLuxae === 0
+                      ? '—'
+                      : `${row.amountLuxae > 0 ? '+' : '−'}${formatCrypto(Math.abs(row.amountLuxae), 4)} ${TOKEN_SYMBOL}`;
+                  return (
+                    <Box
+                      key={row.id}
+                      bg="$backgroundLight50"
+                      borderRadius="$lg"
+                      p="$3"
+                      borderLeftWidth={4}
+                      borderLeftColor={ledgerKindBadgeColor(row.kind)}
+                    >
+                      <HStack justifyContent="space-between" alignItems="flex-start" flexWrap="wrap">
+                        <VStack space="xs" flex={1} maxWidth="72%">
+                          <HStack space="xs" alignItems="center" flexWrap="wrap">
+                            <Text fontSize="$2xs" fontWeight="$bold" color={brand}>
+                              {kindLabel}
+                            </Text>
+                            <Text fontSize="$2xs" color="$textLight500">
+                              {when}
+                            </Text>
+                          </HStack>
+                          <Text fontSize="$sm" fontWeight="$semibold" color="$textLight900">
+                            {title}
+                          </Text>
+                          {row.details ? (
+                            <Text fontSize="$xs" color="$textLight600" selectable>
+                              {row.details}
+                            </Text>
+                          ) : null}
+                        </VStack>
+                        <Text fontSize="$sm" fontWeight="$bold" color="$textLight800">
+                          {amt}
+                        </Text>
+                      </HStack>
+                    </Box>
+                  );
+                })}
+              </VStack>
+            )}
           </VStack>
         </VStack>
       </ScrollView>
@@ -501,7 +643,7 @@ export default function WalletScreen() {
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 }}>
           <Box bg="$white" borderRadius="$xl" p="$5">
-            <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$3">
+            <Text fontSize="$lg" fontWeight="$bold" color={brand} mb="$3">
               {addAddressModal.chain === 'bitcoin'
                 ? t.addAddressBtc
                 : addAddressModal.chain === 'bitcoin-cash'
@@ -531,7 +673,7 @@ export default function WalletScreen() {
               >
                 <ButtonText>{language === 'es' ? 'Cancelar' : 'Cancel'}</ButtonText>
               </Button>
-              <Button size="sm" bg="#00704A" onPress={handleAddAddress}>
+              <Button size="sm" bg={brand} onPress={handleAddAddress}>
                 <ButtonText>{t.addAddress}</ButtonText>
               </Button>
             </HStack>

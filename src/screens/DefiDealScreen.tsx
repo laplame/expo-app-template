@@ -4,17 +4,19 @@ import { Box, Text, VStack, Pressable } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
 import { useSettings } from '../context/SettingsContext';
 import { glossary, ecosystem, version, getDefinition, type GlossaryEntry } from '../data/glossary';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 export default function DefiDealScreen() {
   const { language } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
 
   const t = useMemo(
     () => ({
       title: 'Defi.Deal',
       subtitle: language === 'es' ? 'Glosario de términos' : 'Glossary',
       subtitleLong: language === 'es'
-        ? 'Definiciones de conceptos Link4Deal, cripto y DeFi; incluye advertencias de billetera (LUXAE / LXD) y seguridad.'
-        : 'Link4Deal, crypto and DeFi terms explained; includes wallet notices (LUXAE / LXD) and security.',
+        ? 'Definiciones de conceptos Link4Deal, cripto, DeFi y Nostr (npub, relays, NIP, zaps); incluye advertencias de billetera (LUXAE / LXD) y seguridad.'
+        : 'Link4Deal, crypto, DeFi and Nostr terms (npub, relays, NIPs, zaps); includes wallet notices (LUXAE / LXD) and security.',
       category: language === 'es' ? 'Categoría' : 'Category',
     }),
     [language]
@@ -24,7 +26,7 @@ export default function DefiDealScreen() {
     <Box flex={1} bg="$white">
       <StatusBar style="dark" />
       <ScrollView contentContainerStyle={{ paddingBottom: 40 }} showsVerticalScrollIndicator={false}>
-        <Box bg="#00704A" px="$4" pt="$4" pb="$6">
+        <Box bg={brand} px="$4" pt="$4" pb="$6">
           <Text fontSize="$2xl" fontWeight="$bold" color="$white">
             {t.title}
           </Text>
@@ -46,10 +48,10 @@ export default function DefiDealScreen() {
               borderRadius="$xl"
               p="$4"
               borderLeftWidth={4}
-              borderLeftColor="#00704A"
+              borderLeftColor={brand}
               _pressed={{ opacity: 0.95 }}
             >
-              <Text fontSize="$md" fontWeight="$bold" color="#00704A" mb="$1">
+              <Text fontSize="$md" fontWeight="$bold" color={brand} mb="$1">
                 {item.term}
               </Text>
               <Text fontSize="$xs" color="$textLight500" mb="$2">

@@ -9,9 +9,16 @@ import { getStoresNearUser, type NearbyStore } from '../data/nearbyStores';
 import { TOP_20_GROCERY_PRODUCTS } from '../data/groceryProducts';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const DEFAULT_COORDS = { lat: 19.4326, lng: -99.1332 };
+
+function storeTypeColor(type: NearbyStore['type'], brandColor: string): string {
+  if (type === 'department') return brandColor;
+  if (type === 'coffee') return '#8B4513';
+  return '#1a73e8';
+}
 
 function getTranslations(language: 'en' | 'es') {
   if (language === 'es') {
@@ -26,9 +33,10 @@ function getTranslations(language: 'en' | 'es') {
       termsApply: 'Términos y condiciones aplican',
       rewards: 'Recompensas',
       nearbyStores: 'Tiendas más cercanas',
-      nearbyStoresSubtitle: 'Departamentales y supermercados',
+      nearbyStoresSubtitle: 'Departamentales, supermercados y cafés',
       department: 'Tienda departamental',
       supermarket: 'Supermercado',
+      coffee: 'Cafetería',
       getDirections: 'Llévame ahí',
       mapLabel: 'Mapa de tiendas',
       cartTitle: 'Carrito de despensa',
@@ -52,9 +60,10 @@ function getTranslations(language: 'en' | 'es') {
     termsApply: 'Terms and conditions apply',
     rewards: 'Rewards',
     nearbyStores: 'Nearest stores',
-    nearbyStoresSubtitle: 'Department stores & supermarkets',
+    nearbyStoresSubtitle: 'Department stores, supermarkets & coffee shops',
     department: 'Department store',
     supermarket: 'Supermarket',
+    coffee: 'Coffee shop',
     getDirections: 'Take me there',
     mapLabel: 'Stores map',
     cartTitle: 'Grocery cart',
@@ -70,6 +79,7 @@ function getTranslations(language: 'en' | 'es') {
 
 export default function MallOrderScreen() {
   const { language } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
   const [currentBanner, setCurrentBanner] = useState(0);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [preferredStore, setPreferredStore] = useState<{ id: string; name: string; nameEs: string; address?: string } | null>(null);
@@ -123,7 +133,7 @@ export default function MallOrderScreen() {
   const appName = language === 'es' ? 'damecodigo' : 'link4deal';
 
   const nearbyStores = useMemo(
-    () => getStoresNearUser(userLocation?.lat ?? null, userLocation?.lng ?? null, 8),
+    () => getStoresNearUser(userLocation?.lat ?? null, userLocation?.lng ?? null, 12),
     [userLocation?.lat, userLocation?.lng]
   );
 
@@ -182,7 +192,7 @@ export default function MallOrderScreen() {
       return (
         <Box height={200} bg="$backgroundLight200" justifyContent="center" alignItems="center" borderRadius="$lg" mb="$4">
           <VStack alignItems="center" space="xs" bg="rgba(255,255,255,0.9)" px="$4" py="$2" borderRadius="$md">
-            <Text fontSize="$sm" fontWeight="$bold" color="#00704A">{t.mapLabel}</Text>
+            <Text fontSize="$sm" fontWeight="$bold" color={brand}>{t.mapLabel}</Text>
             <Text fontSize="$xs" color="$textLight500">{language === 'es' ? 'Mapa disponible en app nativa' : 'Map available in native app'}</Text>
           </VStack>
         </Box>
@@ -197,7 +207,7 @@ export default function MallOrderScreen() {
               coordinate={{ latitude: store.latitude, longitude: store.longitude }}
               title={language === 'es' ? store.nameEs : store.name}
               description={language === 'es' ? store.addressEs : store.address}
-              pinColor={store.type === 'department' ? '#00704A' : '#1a73e8'}
+              pinColor={storeTypeColor(store.type, brand)}
             />
           ))}
         </MapView>
@@ -229,10 +239,10 @@ export default function MallOrderScreen() {
       <ScrollView flex={1} contentContainerStyle={{ padding: 20, paddingBottom: 40 }}>
         <VStack space="lg">
           {/* 1. Tienda principal (de Settings) + Pedir - ARRIBA */}
-          <Box bg="$backgroundLight50" borderRadius="$xl" p="$4" borderLeftWidth={4} borderLeftColor="#00704A">
+          <Box bg="$backgroundLight50" borderRadius="$xl" p="$4" borderLeftWidth={4} borderLeftColor={brand}>
             <VStack space="md">
               <VStack space="xs">
-                <Text fontSize="$lg" fontWeight="$bold" color="#00704A">
+                <Text fontSize="$lg" fontWeight="$bold" color={brand}>
                   {mainStore ? (language === 'es' ? mainStore.nameEs : mainStore.name) : t.selectStore}
                 </Text>
                 {mainStore?.address && (
@@ -246,7 +256,7 @@ export default function MallOrderScreen() {
                   </Text>
                 )}
               </VStack>
-              <Pressable bg="#00704A" borderRadius="$lg" px="$4" py="$3" alignSelf="flex-start" opacity={mainStore ? 1 : 0.6}>
+              <Pressable bg={brand} borderRadius="$lg" px="$4" py="$3" alignSelf="flex-start" opacity={mainStore ? 1 : 0.6}>
                 <HStack space="xs" alignItems="center">
                   <Text fontSize="$md" color="$white" fontWeight="$semibold">
                     {t.order}
@@ -263,7 +273,7 @@ export default function MallOrderScreen() {
               <Pressable onPress={() => setCartExpanded((e) => !e)}>
                 <HStack justifyContent="space-between" alignItems="center" mb={cartExpanded ? '$3' : 0}>
                   <VStack flex={1}>
-                    <Text fontSize="$lg" fontWeight="$bold" color="#00704A">
+                    <Text fontSize="$lg" fontWeight="$bold" color={brand}>
                       {t.cartTitle}
                     </Text>
                     <Text fontSize="$sm" color="$textLight600">
@@ -271,7 +281,7 @@ export default function MallOrderScreen() {
                       {!cartExpanded && ` · ${Object.values(cartItems).reduce((s, n) => s + n, 0)} ${language === 'es' ? 'productos' : 'items'}`}
                     </Text>
                   </VStack>
-                  <Text fontSize="$lg" color="#00704A">
+                  <Text fontSize="$lg" color={brand}>
                     {cartExpanded ? '▼' : '▶'}
                   </Text>
                 </HStack>
@@ -313,14 +323,14 @@ export default function MallOrderScreen() {
                           alignItems="center"
                           opacity={qty > 0 ? 1 : 0.4}
                         >
-                          <Text fontSize="$md" fontWeight="$bold" color="#00704A">−</Text>
+                          <Text fontSize="$md" fontWeight="$bold" color={brand}>−</Text>
                         </Pressable>
                         <Text fontSize="$sm" fontWeight="$semibold" minWidth={24} textAlign="center">
                           {qty}
                         </Text>
                         <Pressable
                           onPress={() => addToCart(product.id)}
-                          bg="#00704A"
+                          bg={brand}
                           borderRadius="$full"
                           w={28}
                           h={28}
@@ -368,7 +378,7 @@ export default function MallOrderScreen() {
                   minHeight={180}
                 >
                   <VStack space="sm" flex={1} justifyContent="space-between">
-                    <Text fontSize="$xs" fontWeight="$bold" color="#00704A">
+                    <Text fontSize="$xs" fontWeight="$bold" color={brand}>
                       {banner.title}
                     </Text>
                     <VStack space="xs">
@@ -380,7 +390,7 @@ export default function MallOrderScreen() {
                       </Text>
                     </VStack>
                     <HStack justifyContent="space-between" alignItems="center">
-                      <Box bg="#00704A" px="$3" py="$1" borderRadius="$md">
+                      <Box bg={brand} px="$3" py="$1" borderRadius="$md">
                         <Text fontSize="$xs" fontWeight="$bold" color="$white">
                           {banner.label}
                         </Text>
@@ -399,7 +409,7 @@ export default function MallOrderScreen() {
                   key={index}
                   width={currentBanner === index ? 24 : 8}
                   height={8}
-                  bg={currentBanner === index ? '#00704A' : '#D0D0D0'}
+                  bg={currentBanner === index ? brand : '#D0D0D0'}
                   borderRadius="$full"
                 />
               ))}
@@ -408,7 +418,7 @@ export default function MallOrderScreen() {
 
           {/* 3. Mapa + Tiendas más cercanas */}
           <Box>
-            <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$1">
+            <Text fontSize="$lg" fontWeight="$bold" color={brand} mb="$1">
               {t.nearbyStores}
             </Text>
             <Text fontSize="$sm" color="$textLight600" mb="$2">
@@ -423,7 +433,7 @@ export default function MallOrderScreen() {
                   borderRadius="$lg"
                   p="$3"
                   borderLeftWidth={4}
-                  borderLeftColor={store.type === 'department' ? '#00704A' : '#1a73e8'}
+                  borderLeftColor={storeTypeColor(store.type, brand)}
                 >
                   <HStack justifyContent="space-between" alignItems="flex-start">
                     <VStack flex={1} mr="$2">
@@ -434,10 +444,12 @@ export default function MallOrderScreen() {
                         {language === 'es' ? store.addressEs : store.address}
                       </Text>
                       <Text fontSize="$xs" color="$textLight400" mt="$0.5">
-                        {store.distanceKm.toFixed(1)} km · {store.type === 'department' ? t.department : t.supermarket}
+                        {store.distanceKm.toFixed(1)} km · {store.type === 'department' ? t.department : store.type === 'coffee' ? t.coffee : t.supermarket}
+                        {store.source ? ` · ${store.source}` : ''}
+                        {store.whatsapp ? ` · WhatsApp: ${store.whatsapp}` : ''}
                       </Text>
                     </VStack>
-                    <Pressable onPress={() => openDirections(store)} bg="#00704A" borderRadius="$md" px="$3" py="$2">
+                    <Pressable onPress={() => openDirections(store)} bg={brand} borderRadius="$md" px="$3" py="$2">
                       <Text fontSize="$sm" color="$white" fontWeight="$medium">
                         {t.getDirections}
                       </Text>

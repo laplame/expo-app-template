@@ -4,6 +4,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { createDrawerNavigator } from '@react-navigation/drawer';
 import { Pressable, Text } from '@gluestack-ui/themed';
 import { useSettings } from '../context/SettingsContext';
+import { useAppTheme } from '../theme/useAppTheme';
 import HomeScreen from '../screens/HomeScreen';
 import WalletScreen from '../screens/WalletScreen';
 import NYCScreen from '../screens/NYCScreen';
@@ -13,26 +14,33 @@ import UploadPromotionsScreen from '../screens/UploadPromotionsScreen';
 import QuickRegisterScreen from '../screens/QuickRegisterScreen';
 import DefiDealScreen from '../screens/DefiDealScreen';
 import MallOrderScreen from '../screens/MallOrderScreen';
-import InfluencerSearchScreen from '../screens/InfluencerSearchScreen';
+import MonetizationScreen from '../screens/MonetizationScreen';
 import InfluencersListScreen from '../screens/InfluencersListScreen';
 import NetworkP2PScreen from '../screens/NetworkP2PScreen';
+import EmailDexScreen from '../screens/EmailDexScreen';
 import CustomDrawerContent from '../components/CustomDrawerContent';
 import type { InfluencerPlatform } from '../services/influencersApi';
 
 export type RootStackParamList = {
   /** scrollToPromotions: al abrir desde el menú “Cupones”, hace scroll al listado de promociones */
-  Home: { scrollToPromotions?: boolean } | undefined;
+  Home: { scrollToPromotions?: boolean; redeemPromotionId?: string } | undefined;
   Wallet: undefined;
   NYC: undefined;
   Settings: undefined;
-  PromotionsMap: undefined;
+  PromotionsMap: { focusPromotionId?: string } | undefined;
   UploadPromotions: undefined;
   QuickRegister: undefined;
   DefiDeal: undefined;
   MallOrder: undefined;
-  InfluencerSearch: { initialQuery?: string; platform?: InfluencerPlatform; imageUri?: string };
+  Monetization: {
+    tab?: 'panel' | 'register';
+    initialQuery?: string;
+    platform?: InfluencerPlatform;
+    imageUri?: string;
+  };
   InfluencersList: undefined;
   NetworkP2P: undefined;
+  EmailDex: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -40,13 +48,13 @@ const Drawer = createDrawerNavigator();
 
 function StackNavigator() {
   const { language } = useSettings();
+  const theme = useAppTheme();
   return (
     <Stack.Navigator
       initialRouteName="Home"
       screenOptions={({ navigation }) => ({
-        // Header styling with green theme
         headerStyle: {
-          backgroundColor: '#00704A',  // Green color matching app theme
+          backgroundColor: theme.brand,
         },
         headerTintColor: '#fff',  // White text
         headerTitleStyle: {
@@ -111,10 +119,12 @@ function StackNavigator() {
         component={MallOrderScreen}
         options={{ title: language === 'es' ? 'Tiendas' : 'Stores' }}
       />
-      <Stack.Screen 
-        name="InfluencerSearch" 
-        component={InfluencerSearchScreen}
-        options={{ title: language === 'es' ? 'Buscar influencers' : 'Search influencers' }}
+      <Stack.Screen
+        name="Monetization"
+        component={MonetizationScreen}
+        options={{
+          title: language === 'es' ? 'Monetización' : 'Monetization',
+        }}
       />
       <Stack.Screen 
         name="InfluencersList" 
@@ -124,7 +134,18 @@ function StackNavigator() {
       <Stack.Screen
         name="NetworkP2P"
         component={NetworkP2PScreen}
-        options={{ headerShown: false }}
+        options={{
+          headerShown: false,
+          title: language === 'es' ? 'Social Layer' : 'Social Layer',
+        }}
+      />
+      <Stack.Screen
+        name="EmailDex"
+        component={EmailDexScreen}
+        options={{
+          headerShown: false,
+          title: 'E-mailDex',
+        }}
       />
     </Stack.Navigator>
   );

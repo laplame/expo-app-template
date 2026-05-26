@@ -1,11 +1,12 @@
 import React, { useMemo } from 'react';
+import { useBrandTheme } from '../theme/useBrandTheme';
 import { Box, Text, VStack, HStack, Pressable } from '@gluestack-ui/themed';
 import { Image } from 'react-native';
 import {
   ApiPromotionDoc,
   promotionImageUrl,
   formatPromotionDate,
-  isGpsCouponRequired,
+  isInStoreGpsCoupon,
   SITE_PROMO_URLS,
 } from '../services/promotionsApi';
 import CardSocialActions from './CardSocialActions';
@@ -46,6 +47,8 @@ interface PromotionCardProps {
   masonryImageHeight?: number;
   /** Barra social; si no se indica, solo se muestra cuando `fillColumn` (feed masonry). */
   showSocialActions?: boolean;
+  /** Tarjeta densa para cuadrícula 2 columnas en inicio (sin barra social por defecto). */
+  homeGrid?: boolean;
 }
 
 export default function PromotionCard({
@@ -56,8 +59,16 @@ export default function PromotionCard({
   fillColumn,
   masonryImageHeight,
   showSocialActions: showSocialActionsProp,
+  homeGrid,
 }: PromotionCardProps) {
-  const showSocialBar = showSocialActionsProp !== undefined ? showSocialActionsProp : Boolean(fillColumn);
+  const { brand } = useBrandTheme();
+  const cardSocial = useMemo(() => getCardSocialStrings(language), [language]);
+  const showSocialBar =
+    showSocialActionsProp !== undefined
+      ? showSocialActionsProp
+      : homeGrid
+        ? false
+        : Boolean(fillColumn);
   const title = doc.title || doc.productName || '';
   const imgUrl = promotionImageUrl(doc);
   const emoji = CATEGORY_EMOJI[doc.category ?? ''] ?? '🏷️';
@@ -81,7 +92,7 @@ export default function PromotionCard({
     >
       {/* Badge descuento */}
       {doc.discountPercentage != null && doc.discountPercentage > 0 && (
-        <Box position="absolute" top={8} right={8} zIndex={1} bg="#00704A" borderRadius="$md" px="$2" py="$1">
+        <Box position="absolute" top={8} right={8} zIndex={1} bg={brand} borderRadius="$md" px="$2" py="$1">
           <Text fontSize="$xs" color="$white" fontWeight="$bold">
             {doc.discountPercentage}% {language === 'es' ? 'de descuento' : 'off'}
           </Text>
@@ -96,7 +107,7 @@ export default function PromotionCard({
           </Text>
         </Box>
       )}
-      {isGpsCouponRequired(doc) && (
+      {isInStoreGpsCoupon(doc) && (
         <Box
           position="absolute"
           top={doc.redirectInsteadOfQr ? 40 : 8}
@@ -117,7 +128,13 @@ export default function PromotionCard({
       <Box
         width="100%"
         height={
-          fillColumn ? masonryImageHeight ?? 128 : compact ? 100 : 140
+          fillColumn
+            ? masonryImageHeight ?? 128
+            : homeGrid
+              ? 88
+              : compact
+                ? 100
+                : 140
         }
         bg="$backgroundLight100"
       >
@@ -142,13 +159,18 @@ export default function PromotionCard({
         />
       ) : null}
 
-      <VStack p="$3" space="xs">
+      <VStack p={homeGrid ? '$2' : '$3'} space="xs">
         {/* title / productName desde API */}
-        <Text fontSize="$sm" fontWeight="$semibold" color="$textLight900" numberOfLines={2}>
+        <Text
+          fontSize={homeGrid ? '$xs' : '$sm'}
+          fontWeight="$semibold"
+          color="$textLight900"
+          numberOfLines={2}
+        >
           {title}
         </Text>
 
-        {!compact && doc.description ? (
+        {!compact && !homeGrid && doc.description ? (
           <Text fontSize="$xs" color="$textLight600" numberOfLines={2}>
             {doc.description}
           </Text>
@@ -157,7 +179,7 @@ export default function PromotionCard({
         {/* brand y category desde API */}
         <HStack flexWrap="wrap" alignItems="center" space="xs">
           {doc.brand ? (
-            <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+            <Text fontSize="$xs" color={brand} fontWeight="$medium">
               {doc.brand}
             </Text>
           ) : null}
@@ -173,7 +195,7 @@ export default function PromotionCard({
           <Text fontSize="$xs" color="$textLight500" textDecorationLine="line-through">
             {formatPrice(doc.currency, doc.originalPrice, language)}
           </Text>
-          <Text fontSize="$md" fontWeight="$bold" color="#00704A">
+          <Text fontSize={homeGrid ? '$sm' : '$md'} fontWeight="$bold" color={brand}>
             {formatPrice(doc.currency, doc.currentPrice, language)}
           </Text>
         </HStack>
@@ -195,18 +217,20 @@ export default function PromotionCard({
     </Box>
   );
 
-  const outerWidth = fillColumn ? ('100%' as const) : compact ? 160 : 280;
+  const outerWidth =
+    fillColumn || homeGrid ? ('100%' as const) : compact ? 160 : 280;
+  const stretchCol = fillColumn || homeGrid;
 
   if (onPress) {
     return (
-      <Pressable onPress={onPress} width={outerWidth} alignSelf={fillColumn ? 'stretch' : undefined}>
+      <Pressable onPress={onPress} width={outerWidth} alignSelf={stretchCol ? 'stretch' : undefined}>
         {cardContent}
       </Pressable>
     );
   }
 
   return (
-    <Box width={outerWidth} alignSelf={fillColumn ? 'stretch' : undefined}>
+    <Box width={outerWidth} alignSelf={stretchCol ? 'stretch' : undefined}>
       {cardContent}
     </Box>
   );

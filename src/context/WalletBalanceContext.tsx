@@ -1,7 +1,18 @@
-import React, { createContext, useContext, useState, useCallback, useMemo, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import { getPricesInUsd, CoinPrices } from '../services/coingecko';
 import { useSettings } from './SettingsContext';
-import { getLuxaeBalance, setLuxaeBalance, getWelcomeBonusGranted, setWelcomeBonusGranted, getThreeFieldsBonusGranted, setThreeFieldsBonusGranted } from '../services/storage';
+import { TOKEN_SYMBOL } from '../constants/luxToken';
+import {
+  getLuxaeBalance,
+  setLuxaeBalance,
+  getWelcomeBonusGranted,
+  setWelcomeBonusGranted,
+  getThreeFieldsBonusGranted,
+  setThreeFieldsBonusGranted,
+  appendWalletLedgerEntry,
+} from '../services/storage';
+import type { WalletLedgerKind } from '../services/storage';
 
 const USD_TO_MXN = 17;
 
@@ -64,7 +75,19 @@ interface WalletBalanceContextData {
   /** Otorga 50 unidades TOKEN_SYMBOL (50 USD) una sola vez al tener nombre, fecha nacimiento y teléfono. */
   grantThreeFieldsBonus: () => Promise<boolean>;
   /** Suma saldo TOKEN_SYMBOL (ej. 10 por subir promoción). Se refleja en Home y Wallet. */
-  addLuxaeBalance: (amount: number) => Promise<number>;
+  addLuxaeBalance: (
+    amount: number,
+    ledger?: { kind?: WalletLedgerKind; titleEs: string; titleEn: string; details?: string }
+  ) => Promise<number>;
+  /** Resta saldo LUXAE y registra pago o redención en el historial de Billetera. */
+  subtractLuxaeBalance: (
+    amount: number,
+    ledger: { kind: 'payment' | 'redemption'; titleEs: string; titleEn: string; details?: string }
+  ) => Promise<number>;
+  /** Ya se leyó el saldo desde almacenamiento al menos una vez (evita parpadeos / lecturas concurrentes). */
+  luxaeHydrated: boolean;
+  /** Relee AsyncStorage y actualiza estado (encadenado con mutaciones para idempotencia). */
+  refreshLuxaeBalance: () => Promise<number>;
 }
 
 export interface WalletBalanceContextValue extends WalletBalanceContextData {
@@ -82,10 +105,42 @@ export function WalletBalanceProvider({ children }: { children: React.ReactNode 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [luxaeBalance, setLuxaeBalanceState] = useState(0);
+  const [luxaeHydrated, setLuxaeHydrated] = useState(false);
+
+  /** Cola FIFO: todas las lecturas/escrituras del saldo LUXAE pasan aquí para evitar carreras RMW. */
+  const luxaeOpsTailRef = useRef(Promise.resolve<void>(undefined));
+  const runLuxaeExclusive = useCallback(<T,>(fn: () => Promise<T>): Promise<T> => {
+    const next = luxaeOpsTailRef.current.then(() => fn());
+    luxaeOpsTailRef.current = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
+  }, []);
+
+  const refreshLuxaeBalance = useCallback(async (): Promise<number> => {
+    return runLuxaeExclusive(async () => {
+      const v = await getLuxaeBalance();
+      setLuxaeBalanceState(v);
+      return v;
+    });
+  }, [runLuxaeExclusive]);
 
   useEffect(() => {
-    getLuxaeBalance().then(setLuxaeBalanceState);
-  }, []);
+    let cancelled = false;
+    runLuxaeExclusive(async () => {
+      const v = await getLuxaeBalance();
+      if (!cancelled) setLuxaeBalanceState(v);
+      return v;
+    })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLuxaeHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [runLuxaeExclusive]);
 
   const fetchPrices = useCallback(async () => {
     setLoading(true);
@@ -105,35 +160,109 @@ export function WalletBalanceProvider({ children }: { children: React.ReactNode 
     fetchPrices();
   }, [fetchPrices]);
 
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active') refreshLuxaeBalance().catch(() => {});
+    });
+    return () => sub.remove();
+  }, [refreshLuxaeBalance]);
+
   const grantWelcomeBonus = useCallback(async (): Promise<boolean> => {
-    const already = await getWelcomeBonusGranted();
-    if (already) return false;
-    const current = await getLuxaeBalance();
-    const next = current + WELCOME_BONUS_LUXAE;
-    await setLuxaeBalance(next);
-    await setWelcomeBonusGranted(true);
-    setLuxaeBalanceState(next);
-    return true;
-  }, []);
+    return runLuxaeExclusive(async () => {
+      const already = await getWelcomeBonusGranted();
+      if (already) return false;
+      const current = await getLuxaeBalance();
+      const next = current + WELCOME_BONUS_LUXAE;
+      await setLuxaeBalance(next);
+      await setWelcomeBonusGranted(true);
+      setLuxaeBalanceState(next);
+      await appendWalletLedgerEntry({
+        kind: 'income',
+        amountLuxae: WELCOME_BONUS_LUXAE,
+        titleEs: 'Bono de bienvenida (KYC)',
+        titleEn: 'Welcome bonus (KYC)',
+      });
+      return true;
+    });
+  }, [runLuxaeExclusive]);
 
   const grantThreeFieldsBonus = useCallback(async (): Promise<boolean> => {
-    const already = await getThreeFieldsBonusGranted();
-    if (already) return false;
-    const current = await getLuxaeBalance();
-    const next = current + 50;
-    await setLuxaeBalance(next);
-    await setThreeFieldsBonusGranted(true);
-    setLuxaeBalanceState(next);
-    return true;
-  }, []);
+    return runLuxaeExclusive(async () => {
+      const already = await getThreeFieldsBonusGranted();
+      if (already) return false;
+      const current = await getLuxaeBalance();
+      const next = current + 50;
+      await setLuxaeBalance(next);
+      await setThreeFieldsBonusGranted(true);
+      setLuxaeBalanceState(next);
+      await appendWalletLedgerEntry({
+        kind: 'income',
+        amountLuxae: 50,
+        titleEs: 'Bono perfil (nombre, fecha, teléfono)',
+        titleEn: 'Profile bonus (name, birth date, phone)',
+      });
+      return true;
+    });
+  }, [runLuxaeExclusive]);
 
-  const addLuxaeBalance = useCallback(async (amount: number): Promise<number> => {
-    const current = await getLuxaeBalance();
-    const next = Math.max(0, current + amount);
-    await setLuxaeBalance(next);
-    setLuxaeBalanceState(next);
-    return next;
-  }, []);
+  const addLuxaeBalance = useCallback(
+    async (
+      amount: number,
+      ledger?: { kind?: WalletLedgerKind; titleEs: string; titleEn: string; details?: string }
+    ): Promise<number> => {
+      return runLuxaeExclusive(async () => {
+        const current = await getLuxaeBalance();
+        const next = Math.max(0, current + amount);
+        await setLuxaeBalance(next);
+        setLuxaeBalanceState(next);
+        if (amount !== 0) {
+          const credit = amount > 0;
+          await appendWalletLedgerEntry({
+            kind: ledger?.kind ?? (credit ? 'income' : 'payment'),
+            amountLuxae: amount,
+            titleEs:
+              ledger?.titleEs ??
+              (credit ? `Ingreso ${TOKEN_SYMBOL}` : `Cargo ${TOKEN_SYMBOL}`),
+            titleEn:
+              ledger?.titleEn ?? (credit ? `${TOKEN_SYMBOL} credit` : `${TOKEN_SYMBOL} debit`),
+            details: ledger?.details,
+          });
+        }
+        return next;
+      });
+    },
+    [runLuxaeExclusive]
+  );
+
+  const subtractLuxaeBalance = useCallback(
+    async (
+      amount: number,
+      ledger: { kind: 'payment' | 'redemption'; titleEs: string; titleEn: string; details?: string }
+    ): Promise<number> => {
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return runLuxaeExclusive(async () => {
+          const v = await getLuxaeBalance();
+          setLuxaeBalanceState(v);
+          return v;
+        });
+      }
+      return runLuxaeExclusive(async () => {
+        const current = await getLuxaeBalance();
+        const next = Math.max(0, current - amount);
+        await setLuxaeBalance(next);
+        setLuxaeBalanceState(next);
+        await appendWalletLedgerEntry({
+          kind: ledger.kind,
+          amountLuxae: -amount,
+          titleEs: ledger.titleEs,
+          titleEn: ledger.titleEn,
+          details: ledger.details,
+        });
+        return next;
+      });
+    },
+    [runLuxaeExclusive]
+  );
 
   const value = useMemo(() => {
     const pricesForCalculation: CoinPrices = {
@@ -152,8 +281,23 @@ export function WalletBalanceProvider({ children }: { children: React.ReactNode 
       grantWelcomeBonus,
       grantThreeFieldsBonus,
       addLuxaeBalance,
+      subtractLuxaeBalance,
+      luxaeHydrated,
+      refreshLuxaeBalance,
     };
-  }, [prices, loading, error, fetchPrices, luxaeBalance, grantWelcomeBonus, grantThreeFieldsBonus, addLuxaeBalance]);
+  }, [
+    prices,
+    loading,
+    error,
+    fetchPrices,
+    luxaeBalance,
+    grantWelcomeBonus,
+    grantThreeFieldsBonus,
+    addLuxaeBalance,
+    subtractLuxaeBalance,
+    luxaeHydrated,
+    refreshLuxaeBalance,
+  ]);
 
   return (
     <WalletBalanceContext.Provider value={value}>
@@ -185,6 +329,9 @@ export function useWalletBalance(): WalletBalanceContextValue {
       grantWelcomeBonus: async () => false,
       grantThreeFieldsBonus: async () => false,
       addLuxaeBalance: async () => 0,
+      subtractLuxaeBalance: async () => 0,
+      luxaeHydrated: true,
+      refreshLuxaeBalance: async () => 0,
     };
   }
   const totalDisplay = currency === 'MXN' ? ctx.totalUsd * USD_TO_MXN : ctx.totalUsd;

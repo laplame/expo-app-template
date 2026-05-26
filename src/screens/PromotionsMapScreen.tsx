@@ -6,21 +6,27 @@ import {
   VStack,
   HStack,
   Pressable,
+  Button,
+  ButtonText,
 } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
 import { Linking, Platform, StyleSheet } from 'react-native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import type { RootStackParamList } from '../navigation/AppNavigator';
 import { useSettings } from '../context/SettingsContext';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
 import {
   getPromotions,
   ApiPromotionDoc,
   getStoreCoordinatesFromDoc,
-  isGpsCouponRequired,
+  isInStoreGpsCoupon,
   getLocationRadiusFromDoc,
 } from '../services/promotionsApi';
 import { haversineMeters } from '../utils/geo';
+import { MOCK_NEARBY_STORES, type NearbyStore } from '../data/nearbyStores';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 export interface Promotion {
   id: string;
@@ -36,6 +42,8 @@ export interface Promotion {
   distanceKm: number | null;
   gpsRequired: boolean;
   radiusMeters: number;
+  source?: string;
+  whatsapp?: string;
 }
 
 const DEFAULT_COORDS = { lat: 19.4326, lng: -99.1332 };
@@ -49,7 +57,7 @@ function mapApiDocToPromotion(
   const pt = getStoreCoordinatesFromDoc(doc);
   const lat = pt?.lat ?? DEFAULT_COORDS.lat;
   const lng = pt?.lng ?? DEFAULT_COORDS.lng;
-  const gpsRequired = isGpsCouponRequired(doc);
+  const gpsRequired = isInStoreGpsCoupon(doc);
   const radiusMeters = getLocationRadiusFromDoc(doc);
   let distanceKm: number | null = null;
   if (user && pt) {
@@ -74,6 +82,36 @@ function mapApiDocToPromotion(
   };
 }
 
+function mapStoreToPromotion(
+  store: NearbyStore,
+  user: { lat: number; lng: number } | null
+): Promotion & { distanceKm: number | null } {
+  const distanceKm = user ? haversineMeters(user, { lat: store.latitude, lng: store.longitude }) / 1000 : null;
+  return {
+    id: `store-${store.id}`,
+    name: store.name,
+    nameEs: store.nameEs,
+    address: store.address,
+    addressEs: store.addressEs,
+    latitude: store.latitude,
+    longitude: store.longitude,
+    offer: store.type === 'coffee' ? 'Coffee Shop · active' : 'Geolocated business · active',
+    offerEs: store.type === 'coffee' ? 'Cafetería · activo' : 'Negocio geolocalizado · activo',
+    cryptoAccepted: [TOKEN_SYMBOL],
+    distanceKm,
+    gpsRequired: true,
+    radiusMeters: 500,
+    source: store.source,
+    whatsapp: store.whatsapp,
+  };
+}
+
+function getLocalGeoPromotions(user: { lat: number; lng: number } | null): (Promotion & { distanceKm: number | null })[] {
+  return MOCK_NEARBY_STORES
+    .filter((store) => store.status === 'active' && store.latitude != null && store.longitude != null)
+    .map((store) => mapStoreToPromotion(store, user));
+}
+
 function getTranslations(language: 'en' | 'es') {
   if (language === 'es') {
     return {
@@ -87,6 +125,8 @@ function getTranslations(language: 'en' | 'es') {
       mapMockupHint: 'Aquí irá el mapa con GPS',
       gpsCoupon: 'Cupón por ubicación',
       withinRadius: 'Dentro del radio',
+      getCoupon: 'Ver cupón',
+      tooFarForCoupon: 'Acércate al local para ver el cupón',
     };
   }
   return {
@@ -100,11 +140,16 @@ function getTranslations(language: 'en' | 'es') {
     mapMockupHint: 'Map & GPS logic coming here',
     gpsCoupon: 'Location-based coupon',
     withinRadius: 'Within radius',
+    getCoupon: 'View coupon',
+    tooFarForCoupon: 'Get closer to the store to view the coupon',
   };
 }
 
 export default function PromotionsMapScreen() {
+  const navigation = useNavigation();
+  const route = useRoute<RouteProp<RootStackParamList, 'PromotionsMap'>>();
   const { language } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
   const t = useMemo(() => getTranslations(language), [language]);
   const [promotions, setPromotions] = useState<(Promotion & { distanceKm: number | null })[]>([]);
   const [loading, setLoading] = useState(true);
@@ -115,23 +160,32 @@ export default function PromotionsMapScreen() {
     setLoading(true);
     getPromotions({ limit: 12, status: 'active' }).then((res) => {
       if (cancelled) return;
-      if (res.ok && res.docs?.length) {
-        const list = res.docs.map((d) => mapApiDocToPromotion(d, userLocation));
-        list.sort((a, b) => {
-          const da = a.distanceKm ?? Number.POSITIVE_INFINITY;
-          const db = b.distanceKm ?? Number.POSITIVE_INFINITY;
-          return da - db;
-        });
-        setPromotions(list);
-      } else {
-        setPromotions([]);
-      }
+      const apiPromos = res.ok && res.docs?.length ? res.docs.map((d) => mapApiDocToPromotion(d, userLocation)) : [];
+      const localPromos = getLocalGeoPromotions(userLocation).filter(
+        (local) =>
+          !apiPromos.some((api) =>
+            [api.name, api.nameEs, api.address, api.addressEs].some((value) =>
+              value.toLowerCase().includes(local.name.toLowerCase().replace(' cafetería', ''))
+            )
+          )
+      );
+      const list = [...apiPromos, ...localPromos];
+      list.sort((a, b) => {
+        const da = a.distanceKm ?? Number.POSITIVE_INFINITY;
+        const db = b.distanceKm ?? Number.POSITIVE_INFINITY;
+        return da - db;
+      });
+      const focusId = route.params?.focusPromotionId;
+      const ordered = focusId
+        ? [...list].sort((a, b) => (a.id === focusId ? -1 : b.id === focusId ? 1 : 0))
+        : list;
+      setPromotions(ordered);
       setLoading(false);
     });
     return () => {
       cancelled = true;
     };
-  }, [userLocation]);
+  }, [userLocation, route.params?.focusPromotionId]);
 
   useEffect(() => {
     let mounted = true;
@@ -139,7 +193,7 @@ export default function PromotionsMapScreen() {
       try {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status === 'granted' && mounted) {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest });
           setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
         }
       } catch {
@@ -194,7 +248,7 @@ export default function PromotionsMapScreen() {
       return (
         <Box height={240} width="100%" bg="$backgroundLight200" justifyContent="center" alignItems="center" borderBottomWidth={1} borderBottomColor="$borderLight200">
           <VStack alignItems="center" space="xs" bg="rgba(255,255,255,0.9)" px="$4" py="$2" borderRadius="$md">
-            <Text fontSize="$sm" fontWeight="$bold" color="#00704A">{t.mapMockupLabel}</Text>
+            <Text fontSize="$sm" fontWeight="$bold" color={brand}>{t.mapMockupLabel}</Text>
             <Text fontSize="$xs" color="$textLight500">{language === 'es' ? 'Mapa disponible en app nativa' : 'Map available in native app'}</Text>
           </VStack>
         </Box>
@@ -214,7 +268,7 @@ export default function PromotionsMapScreen() {
               coordinate={{ latitude: promo.latitude, longitude: promo.longitude }}
               title={language === 'es' ? promo.nameEs : promo.name}
               description={promo.address}
-              pinColor="#00704A"
+              pinColor={brand}
             />
           ))}
         </MapView>
@@ -229,7 +283,7 @@ export default function PromotionsMapScreen() {
         <MapSection />
 
         <ScrollView flex={1} contentContainerStyle={{ padding: 16, paddingBottom: 24 }}>
-          <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$1">
+          <Text fontSize="$lg" fontWeight="$bold" color={brand} mb="$1">
             {t.title}
           </Text>
           <Text fontSize="$sm" color="$textLight600" mb="$4">
@@ -253,10 +307,10 @@ export default function PromotionsMapScreen() {
                   borderRadius="$lg"
                   p="$4"
                   borderLeftWidth={4}
-                  borderLeftColor="#00704A"
+                  borderLeftColor={brand}
                 >
                   {index === 0 && userLocation && (
-                    <HStack bg="#00704A" alignSelf="flex-start" px="$2" py="$1" borderRadius="$md" mb="$2">
+                    <HStack bg={brand} alignSelf="flex-start" px="$2" py="$1" borderRadius="$md" mb="$2">
                       <Text fontSize="$xs" color="$white" fontWeight="$bold">
                         {t.nearest}
                       </Text>
@@ -275,9 +329,14 @@ export default function PromotionsMapScreen() {
                   <Text fontSize="$sm" color="$textLight600" mt="$1">
                     {language === 'es' ? promo.addressEs : promo.address}
                   </Text>
-                  <Text fontSize="$sm" color="#00704A" mt="$1" numberOfLines={2}>
+                  <Text fontSize="$sm" color={brand} mt="$1" numberOfLines={2}>
                     {language === 'es' ? promo.offerEs : promo.offer}
                   </Text>
+                  {promo.source || promo.whatsapp ? (
+                    <Text fontSize="$xs" color="$textLight500" mt="$1">
+                      {[promo.source ? `${language === 'es' ? 'Datos proporcionados por' : 'Data provided by'} ${promo.source}` : null, promo.whatsapp ? `WhatsApp: ${promo.whatsapp}` : null].filter(Boolean).join(' · ')}
+                    </Text>
+                  ) : null}
                   <HStack flexWrap="wrap" mt="$2" alignItems="center">
                     <Text fontSize="$xs" color="$textLight500" mr="$1">
                       {t.payWith}:
@@ -302,7 +361,7 @@ export default function PromotionsMapScreen() {
                     </VStack>
                     <Pressable
                       onPress={() => openDirections(promo)}
-                      bg="#00704A"
+                      bg={brand}
                       borderRadius="$md"
                       px="$3"
                       py="$2"
@@ -312,6 +371,26 @@ export default function PromotionsMapScreen() {
                       </Text>
                     </Pressable>
                   </HStack>
+                  {promo.gpsRequired ? (
+                    <Button
+                      mt="$3"
+                      size="sm"
+                      bg={brand}
+                      isDisabled={!!userLocation && promo.distanceKm != null && promo.distanceKm * 1000 > promo.radiusMeters}
+                      onPress={() => {
+                        (navigation as any).navigate('Home', {
+                          redeemPromotionId: promo.id,
+                          scrollToPromotions: true,
+                        });
+                      }}
+                    >
+                      <ButtonText>
+                        {userLocation && promo.distanceKm != null && promo.distanceKm * 1000 > promo.radiusMeters
+                          ? t.tooFarForCoupon
+                          : t.getCoupon}
+                      </ButtonText>
+                    </Button>
+                  ) : null}
                 </Box>
               ))}
             </VStack>

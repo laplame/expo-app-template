@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
+  type ImageStyle,
   Linking,
   Modal,
   Pressable,
@@ -17,6 +19,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import QRCode from 'react-native-qrcode-svg';
 import * as Clipboard from 'expo-clipboard';
+import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DrawerActions, useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -27,7 +30,13 @@ import type { RootStackParamList } from '../navigation/AppNavigator';
 import { getNetworkP2PStrings } from '../i18n/uiStrings';
 import { DEFAULT_NOSTR_RELAYS } from '../services/nostrRelays';
 import {
+  buildNostrFeedCacheKey,
+  getNostrFeedCache,
+  setNostrFeedCache,
+} from '../services/nostrFeedCache';
+import {
   fetchNostrFeed,
+  filterDisplayableNostrFeedItems,
   filterSeedByHashtag,
   mergeFeedWithSeed,
 } from '../services/nostrFeedService';
@@ -59,16 +68,56 @@ import { formatAddressForUi } from '../utils/addressDisplay';
 import { parseFollowPubkey, parseNostrPubkeyFromQrPayload } from '../utils/nostrFollowInput';
 import { getNostrLinkedDisplayName } from '../utils/nostrKycDisplayName';
 import PaidContent402Panel from '../components/PaidContent402Panel';
+import { getSocialLayerColors, type SocialLayerColors } from '../theme/socialLayerTheme';
+import { getAppTheme } from '../theme/appThemes';
+import { getNostrFeedSession, setNostrFeedSession, buildSessionCacheKey } from '../services/nostrFeedSession';
 import NostrFriendQrScanModal from '../components/NostrFriendQrScanModal';
+import CollapsibleBottomPanel from '../components/CollapsibleBottomPanel';
+import {
+  isCloudinaryConfigured,
+  uploadMediaToCloudinary,
+} from '../services/cloudinary';
+import { buildNostrNoteFromMedia } from '../utils/nostrComposeMedia';
 
-const BG = '#000000';
-const SURFACE = '#0c0c0c';
-const LINE = '#1c1c1c';
-const TEXT = '#f2f2f2';
-const MUTED = '#7a7a7a';
-const ACCENT = '#1d9bf0';
+const MAX_COMPOSE_ATTACHMENTS = 4;
+
+type ComposeDraftMedia = {
+  id: string;
+  localUri: string;
+  kind: 'image' | 'video';
+};
+
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'NetworkP2P'>;
+
+const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+/** Oculta el hueco del feed si la URL no carga (CDN, expiración, TLS). */
+function FeedNoteImage({
+  uri,
+  style,
+  onOpen,
+  accessibilityLabel,
+}: {
+  uri: string;
+  style: ImageStyle;
+  onOpen: () => void;
+  accessibilityLabel: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  const trimmed = (uri || '').trim();
+  if (!trimmed || failed) return null;
+  return (
+    <Pressable onPress={onOpen} accessibilityRole="button" accessibilityLabel={accessibilityLabel}>
+      <Image
+        source={{ uri: trimmed }}
+        style={style}
+        resizeMode="cover"
+        onError={() => setFailed(true)}
+      />
+    </Pressable>
+  );
+}
 
 function chainLabel(chain: WalletChain | undefined): string {
   switch (chain ?? 'ethereum') {
@@ -110,11 +159,18 @@ function feedTitle(
 export default function NetworkP2PScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
-  const { language } = useSettings();
+  const { language, appTheme, appBackgroundUri } = useSettings();
   const { revealWalletAddresses } = useVerificationAccess();
   const t = useMemo(() => getNetworkP2PStrings(language), [language]);
+  const palette = useMemo(() => getSocialLayerColors(appTheme), [appTheme]);
+  const themeDef = useMemo(() => getAppTheme(appTheme), [appTheme]);
+  const styles = useMemo(() => createNetworkP2PStyles(palette), [palette]);
 
   const poolRef = useRef<SimplePool | null>(null);
+  const feedListRef = useRef<FlatList<NostrFeedItem>>(null);
+  const scrollOffsetRef = useRef(0);
+  const scrollSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
   const skRef = useRef<Uint8Array | null>(null);
 
   const [npub, setNpub] = useState('');
@@ -124,6 +180,7 @@ export default function NetworkP2PScreen() {
   const [relayHint, setRelayHint] = useState<'ok' | 'warn'>('ok');
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeText, setComposeText] = useState('');
+  const [composeMedia, setComposeMedia] = useState<ComposeDraftMedia[]>([]);
   const [posting, setPosting] = useState(false);
   const [reactingId, setReactingId] = useState<string | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -154,6 +211,13 @@ export default function NetworkP2PScreen() {
   const [linkedDisplayName, setLinkedDisplayName] = useState('');
   const [myQrOpen, setMyQrOpen] = useState(false);
   const [scanFriendOpen, setScanFriendOpen] = useState(false);
+  const [imageLightboxUri, setImageLightboxUri] = useState<string | null>(null);
+  const [nostrActionsExpanded, setNostrActionsExpanded] = useState(false);
+  const [bottomPanelOpen, setBottomPanelOpen] = useState(false);
+  const [configPanelOpen, setConfigPanelOpen] = useState(false);
+  const [emailDexPanelOpen, setEmailDexPanelOpen] = useState(false);
+  /** Evita fetch con modo por defecto antes de leer AsyncStorage; permite hidratar el feed en caché. */
+  const [nostrSocialPrefsReady, setNostrSocialPrefsReady] = useState(false);
 
   const qrSharePayload = useMemo(
     () => (pubHex ? encodeNprofileQrPayload(pubHex) : ''),
@@ -205,19 +269,32 @@ export default function NetworkP2PScreen() {
 
   useEffect(() => {
     (async () => {
-      const [mode, fl, tag, prof] = await Promise.all([
-        getNostrFeedMode(),
-        getNostrFollowing(),
-        getNostrHashtag(),
-        getNostrLocalProfile(),
-      ]);
-      setFeedMode(mode);
-      setFollowing(fl);
-      setHashtagState(tag);
-      setHashtagDraft(tag);
-      setSearchTagInput(tag);
-      setLocalProfile(prof);
-      setProfileDraft(prof);
+      try {
+        const [mode, fl, tag, prof] = await Promise.all([
+          getNostrFeedMode(),
+          getNostrFollowing(),
+          getNostrHashtag(),
+          getNostrLocalProfile(),
+        ]);
+        setFeedMode(mode);
+        setFollowing(fl);
+        setHashtagState(tag);
+        setHashtagDraft(tag);
+        setSearchTagInput(tag);
+        setLocalProfile(prof);
+        setProfileDraft(prof);
+        const cacheKey = buildNostrFeedCacheKey(mode, fl, tag);
+        const [cached, session] = await Promise.all([
+          getNostrFeedCache(cacheKey),
+          getNostrFeedSession(cacheKey),
+        ]);
+        if (cached?.length) setItems(cached);
+        if (session && session.scrollOffset > 0) {
+          pendingScrollRestoreRef.current = session.scrollOffset;
+        }
+      } finally {
+        setNostrSocialPrefsReady(true);
+      }
     })();
   }, []);
 
@@ -241,8 +318,10 @@ export default function NetworkP2PScreen() {
   }, [pubHex, localProfile.nip05]);
 
   const loadFeed = useCallback(async () => {
+    if (!nostrSocialPrefsReady) return;
     const pool = poolRef.current;
     if (!pool) return;
+    const cacheKey = buildNostrFeedCacheKey(feedMode, following, hashtagState);
     setLoading(true);
     setRelayHint('ok');
     try {
@@ -270,19 +349,83 @@ export default function NetworkP2PScreen() {
       }
 
       setItems(merged);
+      await setNostrFeedCache(cacheKey, merged);
+      await setNostrFeedSession({
+        cacheKey,
+        feedMode,
+        hashtag: hashtagState,
+        scrollOffset: scrollOffsetRef.current,
+        savedAt: Date.now(),
+      });
       if (relayItems.length === 0) setRelayHint('warn');
     } catch {
-      setItems((prev) => mergeFeedWithSeed(NOSTR_SEED_FEED, prev));
+      const disk = await getNostrFeedCache(cacheKey);
+      if (disk?.length) {
+        setItems(filterDisplayableNostrFeedItems(disk));
+      } else {
+        setItems((prev) => mergeFeedWithSeed(NOSTR_SEED_FEED, prev));
+      }
       setRelayHint('warn');
       Alert.alert('', t.loadError);
     } finally {
       setLoading(false);
     }
-  }, [feedMode, following, hashtagState, t.loadError]);
+  }, [feedMode, following, hashtagState, nostrSocialPrefsReady, t.loadError]);
+
+  const persistFeedSession = useCallback(
+    async (offset: number) => {
+      if (!nostrSocialPrefsReady) return;
+      const cacheKey = buildSessionCacheKey(feedMode, following, hashtagState);
+      await setNostrFeedSession({
+        cacheKey,
+        feedMode,
+        hashtag: hashtagState,
+        scrollOffset: offset,
+        savedAt: Date.now(),
+      });
+    },
+    [feedMode, following, hashtagState, nostrSocialPrefsReady]
+  );
 
   useEffect(() => {
     loadFeed();
   }, [loadFeed]);
+
+  useEffect(() => {
+    if (!nostrSocialPrefsReady) return;
+    let cancelled = false;
+    const cacheKey = buildSessionCacheKey(feedMode, following, hashtagState);
+    getNostrFeedSession(cacheKey).then((session) => {
+      if (!cancelled && session && session.scrollOffset > 0) {
+        pendingScrollRestoreRef.current = session.scrollOffset;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [feedMode, following, hashtagState, nostrSocialPrefsReady]);
+
+  useEffect(() => {
+    const y = pendingScrollRestoreRef.current;
+    if (y == null || y <= 0 || items.length === 0) return;
+    const frame = requestAnimationFrame(() => {
+      feedListRef.current?.scrollToOffset({ offset: y, animated: false });
+      pendingScrollRestoreRef.current = null;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [items, nostrSocialPrefsReady, loading]);
+
+  useFocusEffect(
+    useCallback(() => {
+      return () => {
+        if (scrollSaveTimerRef.current) {
+          clearTimeout(scrollSaveTimerRef.current);
+          scrollSaveTimerRef.current = null;
+        }
+        void persistFeedSession(scrollOffsetRef.current);
+      };
+    }, [persistFeedSession])
+  );
 
   const openWalletSheet = useCallback(async () => {
     const list = await getWalletAddresses();
@@ -290,33 +433,121 @@ export default function NetworkP2PScreen() {
     setValueOpen(true);
   }, []);
 
+  const closeCompose = useCallback(() => {
+    setComposeOpen(false);
+    setComposeText('');
+    setComposeMedia([]);
+  }, []);
+
+  const removeComposeMedia = useCallback((id: string) => {
+    setComposeMedia((prev) => prev.filter((m) => m.id !== id));
+  }, []);
+
+  const pickComposeMedia = useCallback(async () => {
+    if (composeMedia.length >= MAX_COMPOSE_ATTACHMENTS) return;
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('', t.composeMediaPermission);
+      return;
+    }
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images', 'videos'],
+      allowsMultipleSelection: true,
+      selectionLimit: MAX_COMPOSE_ATTACHMENTS - composeMedia.length,
+      quality: 0.85,
+      videoMaxDuration: 180,
+    });
+    if (result.canceled || !result.assets?.length) return;
+
+    const existingVideo = composeMedia.some((m) => m.kind === 'video');
+    const added: ComposeDraftMedia[] = [];
+    let slotVideo = existingVideo;
+
+    for (const asset of result.assets) {
+      if (composeMedia.length + added.length >= MAX_COMPOSE_ATTACHMENTS) break;
+      const isVideo =
+        asset.type === 'video' || (asset.mimeType ?? '').startsWith('video/');
+      if (isVideo) {
+        if (slotVideo) continue;
+        slotVideo = true;
+        added.push({
+          id: `v-${Date.now()}-${added.length}`,
+          localUri: asset.uri,
+          kind: 'video',
+        });
+      } else {
+        added.push({
+          id: `i-${Date.now()}-${added.length}`,
+          localUri: asset.uri,
+          kind: 'image',
+        });
+      }
+    }
+    if (added.length) setComposeMedia((prev) => [...prev, ...added]);
+  }, [composeMedia, t.composeMediaPermission]);
+
   const publishNote = useCallback(async () => {
     const pool = poolRef.current;
     const sk = skRef.current;
     const text = composeText.trim();
-    if (!pool || !sk || !text) return;
+    const hasMedia = composeMedia.length > 0;
+    if (!pool || !sk || (!text && !hasMedia)) {
+      if (!text && !hasMedia) Alert.alert('', t.composePostNeedsContent);
+      return;
+    }
+    if (hasMedia && !isCloudinaryConfigured()) {
+      Alert.alert('', t.composeCloudinaryMissing);
+      return;
+    }
+
     setPosting(true);
     try {
+      const uploaded: { kind: 'image' | 'video'; url: string }[] = [];
+      for (const item of composeMedia) {
+        const res = await uploadMediaToCloudinary(item.localUri, item.kind, {
+          folder: 'nostr',
+          tags: ['nostr', 'social-layer'],
+        });
+        uploaded.push({ kind: item.kind, url: res.secure_url });
+      }
+
+      const { content, tags } = buildNostrNoteFromMedia(text, uploaded);
+      if (!content.trim()) {
+        Alert.alert('', t.composePostNeedsContent);
+        return;
+      }
+
       const ev = finalizeEvent(
         {
           kind: 1,
           created_at: Math.floor(Date.now() / 1000),
-          tags: [],
-          content: text,
+          tags,
+          content,
         },
         sk
       );
       await pool.publish(DEFAULT_NOSTR_RELAYS, ev);
-      setComposeText('');
-      setComposeOpen(false);
+      closeCompose();
       Alert.alert('', t.posted);
       await loadFeed();
     } catch {
-      Alert.alert('', t.postFail);
+      Alert.alert('', composeMedia.length ? t.composeMediaFail : t.postFail);
     } finally {
       setPosting(false);
     }
-  }, [composeText, loadFeed, t.postFail, t.posted]);
+  }, [
+    composeText,
+    composeMedia,
+    closeCompose,
+    loadFeed,
+    t.composeCloudinaryMissing,
+    t.composeMediaFail,
+    t.composePostNeedsContent,
+    t.postFail,
+    t.posted,
+  ]);
+
+  const canPublishCompose = composeText.trim().length > 0 || composeMedia.length > 0;
 
   const sendLike = useCallback(
     async (item: NostrFeedItem) => {
@@ -468,13 +699,54 @@ export default function NetworkP2PScreen() {
   }, [localProfile, linkedDisplayName]);
 
   const bottomPad = 56 + Math.max(insets.bottom, 8);
-  const fabBottom = bottomPad + 12;
   const headerTitle = feedTitle(feedMode, hashtagState, t);
   const displayNickname = useMemo(() => {
     const nick = localProfile.displayName.trim();
     if (nick) return nick;
     return linkedDisplayName.trim();
   }, [localProfile.displayName, linkedDisplayName]);
+  const kycPanelHeight = 168;
+  const identityPanelHeight = 150;
+  const emailDexPanelHeight = 148;
+  const configPanelHeight = 340;
+  const bottomPanelExtra =
+    (bottomPanelOpen && !displayNickname ? kycPanelHeight : 0) +
+    (nostrActionsExpanded ? identityPanelHeight : 0) +
+    (emailDexPanelOpen ? emailDexPanelHeight : 0) +
+    (configPanelOpen ? configPanelHeight : 0);
+  const fabBottom = bottomPad + bottomPanelExtra + 12;
+
+  const nostrBarMeta = useMemo(() => {
+    const relay =
+      relayHint === 'ok' ? t.nostrBarRelayOk : t.nostrBarRelayWarn;
+    const name = displayNickname || t.nostrBarNoName;
+    return `${relay} · ${name} · ${t.nostrBarProfileHint}`;
+  }, [relayHint, displayNickname, t]);
+
+  const toggleKycPanel = () => {
+    setNostrActionsExpanded(false);
+    setConfigPanelOpen(false);
+    setEmailDexPanelOpen(false);
+    setBottomPanelOpen((v) => !v);
+  };
+  const toggleIdentityPanel = () => {
+    setBottomPanelOpen(false);
+    setConfigPanelOpen(false);
+    setEmailDexPanelOpen(false);
+    setNostrActionsExpanded((v) => !v);
+  };
+  const toggleEmailDexPanel = () => {
+    setBottomPanelOpen(false);
+    setNostrActionsExpanded(false);
+    setConfigPanelOpen(false);
+    setEmailDexPanelOpen((v) => !v);
+  };
+  const toggleConfigPanel = () => {
+    setBottomPanelOpen(false);
+    setNostrActionsExpanded(false);
+    setEmailDexPanelOpen(false);
+    setConfigPanelOpen((v) => !v);
+  };
 
   const avatarUri =
     localProfile.pictureUrl.trim() ||
@@ -492,7 +764,7 @@ export default function NetworkP2PScreen() {
           <Image
             source={{
               uri:
-                item.avatarUrl ??
+                (item.avatarUrl && item.avatarUrl.trim()) ||
                 `https://picsum.photos/seed/${item.pubkey.slice(0, 8)}/96/96`,
             }}
             style={styles.avatar}
@@ -515,21 +787,25 @@ export default function NetworkP2PScreen() {
             </View>
             <Text style={styles.body}>{item.content}</Text>
             {item.imageUrls.map((uri) => (
-              <Image
+              <FeedNoteImage
                 key={uri}
-                source={{ uri }}
+                uri={uri}
                 style={styles.embedImage}
-                resizeMode="cover"
+                accessibilityLabel={t.feedImageA11y}
+                onOpen={() => setImageLightboxUri(uri)}
               />
             ))}
             {item.videoUrl ? (
               <Pressable
-                onPress={() => Linking.openURL(item.videoUrl!)}
+                onPress={() => {
+                  const url = item.videoUrl!;
+                  Linking.openURL(url).catch(() => {});
+                }}
                 style={styles.videoBox}
               >
-                {item.videoPosterUrl ? (
+                {item.videoPosterUrl && item.videoPosterUrl.trim() ? (
                   <Image
-                    source={{ uri: item.videoPosterUrl }}
+                    source={{ uri: item.videoPosterUrl.trim() }}
                     style={styles.videoPoster}
                     resizeMode="cover"
                   />
@@ -565,12 +841,12 @@ export default function NetworkP2PScreen() {
         </View>
       </View>
     ),
-    [openWalletSheet, reactingId, sendLike, t.now, t.videoOpen]
+    [openWalletSheet, reactingId, sendLike, t.now, t.feedImageA11y, t.videoOpen]
   );
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
-      <StatusBar style="light" />
+      <StatusBar style={themeDef.isDark ? 'light' : 'dark'} />
       <View style={styles.header}>
         <Pressable
           onPress={() =>
@@ -597,56 +873,33 @@ export default function NetworkP2PScreen() {
         </Pressable>
       </View>
 
-      <View style={styles.identityBar}>
-        <View style={styles.identityRow}>
-          <Text style={styles.identityLabel}>{t.nostrIdentityLabel}</Text>
-          {nip05Verified && localProfile.nip05 ? (
-            <Text style={styles.verifiedBadge}> NIP-05 ✓</Text>
-          ) : null}
-        </View>
-        <Text style={styles.identityName} numberOfLines={2}>
-          {displayNickname || t.nostrNoNameHint}
+      <View style={styles.nostrBar}>
+        <Text style={styles.nostrBarLabel}>{t.nostrBarLabel}</Text>
+        <Text style={styles.nostrBarMeta} numberOfLines={1}>
+          {nostrBarMeta}
         </Text>
-        <Text style={styles.identitySubline}>{t.nostrSubline}</Text>
-        <View style={styles.identityBtnGrid}>
-          <View style={styles.identityBtnRow}>
-            <Pressable
-              style={[styles.identityGridBtn, !qrSharePayload && styles.btnDisabled]}
-              disabled={!qrSharePayload}
-              onPress={() => qrSharePayload && setMyQrOpen(true)}
-            >
-              <Text style={styles.identityGridBtnText}>{t.nostrMyQr}</Text>
-            </Pressable>
-            <Pressable
-              style={styles.identityGridBtn}
-              onPress={() => setScanFriendOpen(true)}
-            >
-              <Text style={styles.identityGridBtnText}>{t.nostrScanFriend}</Text>
-            </Pressable>
-          </View>
-          <View style={styles.identityBtnRow}>
-            <Pressable style={styles.identityGridBtn} onPress={copyNpub}>
-              <Text style={styles.identityGridBtnText}>{t.copyNpub}</Text>
-            </Pressable>
-            <Pressable style={styles.identityGridBtn} onPress={openProfileModal}>
-              <Text style={styles.identityGridBtnText}>{t.openProfile}</Text>
-            </Pressable>
-          </View>
-        </View>
-      </View>
-
-      <View style={styles.relayBar}>
-        <Text style={styles.relayText}>
-          {t.relayStatus}: {relayHint === 'ok' ? t.relayOk : t.relayWarn}
-        </Text>
-        {loading ? <ActivityIndicator color={MUTED} size="small" /> : null}
+        {nip05Verified && localProfile.nip05 ? (
+          <Text style={styles.nostrBarBadge}>✓</Text>
+        ) : null}
+        {loading ? (
+          <ActivityIndicator color={palette.muted} size="small" style={styles.nostrBarSpinner} />
+        ) : null}
       </View>
 
       <FlatList
+        ref={feedListRef}
         data={items}
         keyExtractor={(it) => it.id}
         renderItem={renderPost}
         extraData={[items, reactingId]}
+        onScroll={(e) => {
+          scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+          if (scrollSaveTimerRef.current) clearTimeout(scrollSaveTimerRef.current);
+          scrollSaveTimerRef.current = setTimeout(() => {
+            void persistFeedSession(scrollOffsetRef.current);
+          }, 350);
+        }}
+        scrollEventThrottle={16}
         ListHeaderComponent={
           <>
             {feedMode === 'following' && following.length === 0 ? (
@@ -655,7 +908,6 @@ export default function NetworkP2PScreen() {
             {items.length === 0 && feedMode === 'following' && following.length > 0 ? (
               <Text style={styles.emptyHint}>{t.noRelayNotes}</Text>
             ) : null}
-            <PaidContent402Panel language={language} />
           </>
         }
         ItemSeparatorComponent={() => <View style={styles.sep} />}
@@ -664,10 +916,35 @@ export default function NetworkP2PScreen() {
           <RefreshControl
             refreshing={loading}
             onRefresh={loadFeed}
-            tintColor={MUTED}
+            tintColor={palette.muted}
           />
         }
       />
+
+      <Modal
+        visible={!!imageLightboxUri}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImageLightboxUri(null)}
+      >
+        <View style={styles.feedLightboxRoot}>
+          <Pressable
+            style={styles.feedLightboxBackdrop}
+            onPress={() => setImageLightboxUri(null)}
+            accessibilityLabel={t.feedImageCloseHint}
+          />
+          <Text style={styles.feedLightboxHint}>{t.feedImageCloseHint}</Text>
+          {imageLightboxUri ? (
+            <View style={styles.feedLightboxImageWrap} pointerEvents="none">
+              <Image
+                source={{ uri: imageLightboxUri }}
+                style={styles.feedLightboxImage}
+                resizeMode="contain"
+              />
+            </View>
+          ) : null}
+        </View>
+      </Modal>
 
       <Pressable
         style={[styles.fab, { bottom: fabBottom }]}
@@ -676,12 +953,193 @@ export default function NetworkP2PScreen() {
         <Text style={styles.fabPlus}>+</Text>
       </Pressable>
 
+      <CollapsibleBottomPanel
+        visible={bottomPanelOpen && !displayNickname}
+        bottom={bottomPad}
+        backgroundUri={appBackgroundUri}
+      >
+          <View style={styles.bottomPanelHeader}>
+            <Text style={styles.bottomPanelTitle}>{t.bottomPanelTitle}</Text>
+            <Pressable
+              onPress={() => setBottomPanelOpen(false)}
+              hitSlop={10}
+              accessibilityRole="button"
+            >
+              <Text style={styles.bottomPanelClose}>{t.bottomPanelClose} ▾</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.bottomPanelHint}>{t.nostrNoNameHint}</Text>
+          <Pressable
+            style={styles.bottomPanelBtn}
+            onPress={() => {
+              setBottomPanelOpen(false);
+              navigation.navigate('NYC');
+            }}
+          >
+            <Text style={styles.bottomPanelBtnText}>{t.goKyc}</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.bottomPanelBtn, styles.bottomPanelBtnSecondary]}
+            onPress={() => {
+              setBottomPanelOpen(false);
+              navigation.navigate('QuickRegister');
+            }}
+          >
+            <Text style={[styles.bottomPanelBtnText, styles.bottomPanelBtnTextSecondary]}>
+              {t.goSignUp}
+            </Text>
+          </Pressable>
+      </CollapsibleBottomPanel>
+
+      <CollapsibleBottomPanel
+        visible={nostrActionsExpanded}
+        bottom={bottomPad}
+        backgroundUri={appBackgroundUri}
+      >
+          <View style={styles.bottomPanelHeader}>
+            <Text style={styles.bottomPanelTitle} numberOfLines={1}>
+              {t.nostrActionsRowLabel}
+            </Text>
+            <Pressable
+              onPress={() => setNostrActionsExpanded(false)}
+              hitSlop={10}
+              accessibilityRole="button"
+            >
+              <Text style={styles.bottomPanelClose}>{t.bottomPanelClose} ▾</Text>
+            </Pressable>
+          </View>
+          <View style={styles.identityBtnGrid}>
+            <View style={styles.identityBtnRow}>
+              <Pressable
+                style={[styles.identityGridBtn, !qrSharePayload && styles.btnDisabled]}
+                disabled={!qrSharePayload}
+                onPress={() => {
+                  setNostrActionsExpanded(false);
+                  if (qrSharePayload) setMyQrOpen(true);
+                }}
+              >
+                <Text style={styles.identityGridBtnText}>{t.nostrMyQr}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.identityGridBtn}
+                onPress={() => {
+                  setNostrActionsExpanded(false);
+                  setScanFriendOpen(true);
+                }}
+              >
+                <Text style={styles.identityGridBtnText}>{t.nostrScanFriend}</Text>
+              </Pressable>
+            </View>
+            <View style={styles.identityBtnRow}>
+              <Pressable
+                style={styles.identityGridBtn}
+                onPress={() => {
+                  setNostrActionsExpanded(false);
+                  copyNpub();
+                }}
+              >
+                <Text style={styles.identityGridBtnText}>{t.copyNpub}</Text>
+              </Pressable>
+              <Pressable
+                style={styles.identityGridBtn}
+                onPress={() => {
+                  setNostrActionsExpanded(false);
+                  openProfileModal();
+                }}
+              >
+                <Text style={styles.identityGridBtnText}>{t.openProfile}</Text>
+              </Pressable>
+            </View>
+          </View>
+      </CollapsibleBottomPanel>
+
+      <CollapsibleBottomPanel
+        visible={emailDexPanelOpen}
+        bottom={bottomPad}
+        backgroundUri={appBackgroundUri}
+      >
+        <View style={styles.bottomPanelHeader}>
+          <Text style={styles.bottomPanelTitle}>{t.emailDexPanelTitle}</Text>
+          <Pressable
+            onPress={() => setEmailDexPanelOpen(false)}
+            hitSlop={10}
+            accessibilityRole="button"
+          >
+            <Text style={styles.bottomPanelClose}>{t.bottomPanelClose} ▾</Text>
+          </Pressable>
+        </View>
+        <Text style={styles.bottomPanelHint}>{t.emailDexPanelSubtitle}</Text>
+        <Pressable
+          style={styles.bottomPanelBtn}
+          onPress={() => {
+            setEmailDexPanelOpen(false);
+            navigation.navigate('EmailDex');
+          }}
+        >
+          <Text style={styles.bottomPanelBtnText}>{t.emailDexOpen}</Text>
+        </Pressable>
+        <Pressable
+          style={[styles.bottomPanelBtn, styles.bottomPanelBtnSecondary]}
+          onPress={() => {
+            setEmailDexPanelOpen(false);
+            Linking.openURL('https://app.nostrmail.org').catch(() => {});
+          }}
+        >
+          <Text style={[styles.bottomPanelBtnText, styles.bottomPanelBtnTextSecondary]}>
+            {t.emailDexOpenNmail}
+          </Text>
+        </Pressable>
+      </CollapsibleBottomPanel>
+
+      <CollapsibleBottomPanel
+        visible={configPanelOpen}
+        bottom={bottomPad}
+        backgroundUri={appBackgroundUri}
+        style={styles.bottomPanelConfig}
+      >
+          <View style={styles.bottomPanelHeader}>
+            <Text style={styles.bottomPanelTitle}>{t.socialConfigPanelTitle}</Text>
+            <Pressable
+              onPress={() => setConfigPanelOpen(false)}
+              hitSlop={10}
+              accessibilityRole="button"
+            >
+              <Text style={styles.bottomPanelClose}>{t.bottomPanelClose} ▾</Text>
+            </Pressable>
+          </View>
+          <Text style={styles.bottomPanelConfigSubtitle}>{t.paid402Title}</Text>
+          <ScrollView
+            style={styles.bottomPanelConfigScroll}
+            nestedScrollEnabled
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <PaidContent402Panel language={language} embedded appTheme={appTheme} />
+          </ScrollView>
+          <Pressable
+            style={[styles.bottomPanelBtn, styles.bottomPanelBtnSecondary, styles.bottomPanelConfigSettingsBtn]}
+            onPress={() => {
+              setConfigPanelOpen(false);
+              navigation.navigate('Settings');
+            }}
+          >
+            <Text style={[styles.bottomPanelBtnText, styles.bottomPanelBtnTextSecondary]}>
+              {t.socialConfigOpenSettings}
+            </Text>
+          </Pressable>
+      </CollapsibleBottomPanel>
+
       <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         <Pressable style={styles.navItem} onPress={() => navigation.navigate('Home')}>
           <Text style={styles.navIcon}>⌂</Text>
         </Pressable>
-        <Pressable style={styles.navItem}>
-          <Text style={styles.navIcon}>☰</Text>
+        <Pressable
+          style={styles.navItem}
+          onPress={toggleKycPanel}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: bottomPanelOpen }}
+        >
+          <Text style={[styles.navIcon, bottomPanelOpen && styles.navIconActive]}>☰</Text>
         </Pressable>
         <Pressable
           style={styles.navCenter}
@@ -689,11 +1147,32 @@ export default function NetworkP2PScreen() {
         >
           <Text style={styles.navCenterIcon}>⚡</Text>
         </Pressable>
-        <Pressable style={styles.navItem}>
-          <Text style={styles.navIcon}>◔</Text>
+        <Pressable
+          style={styles.navItem}
+          onPress={toggleIdentityPanel}
+          accessibilityRole="button"
+          accessibilityLabel={t.nostrActionsRowLabel}
+          accessibilityState={{ expanded: nostrActionsExpanded }}
+        >
+          <Text style={[styles.navIcon, nostrActionsExpanded && styles.navIconActive]}>◔</Text>
         </Pressable>
-        <Pressable style={styles.navItem}>
-          <Text style={styles.navIcon}>◎</Text>
+        <Pressable
+          style={styles.navItem}
+          onPress={toggleEmailDexPanel}
+          accessibilityRole="button"
+          accessibilityLabel={t.emailDexPanelTitle}
+          accessibilityState={{ expanded: emailDexPanelOpen }}
+        >
+          <Text style={[styles.navIcon, emailDexPanelOpen && styles.navIconActive]}>✉</Text>
+        </Pressable>
+        <Pressable
+          style={styles.navItem}
+          onPress={toggleConfigPanel}
+          accessibilityRole="button"
+          accessibilityLabel={t.socialConfigPanelTitle}
+          accessibilityState={{ expanded: configPanelOpen }}
+        >
+          <Text style={[styles.navIcon, configPanelOpen && styles.navIconActive]}>◎</Text>
         </Pressable>
       </View>
 
@@ -721,7 +1200,7 @@ export default function NetworkP2PScreen() {
               value={hashtagDraft}
               onChangeText={setHashtagDraft}
               placeholder={t.hashtagPlaceholder}
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               style={styles.smallInput}
               autoCapitalize="none"
             />
@@ -738,7 +1217,7 @@ export default function NetworkP2PScreen() {
               value={followInput}
               onChangeText={setFollowInput}
               placeholder={t.followAddHint}
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               style={styles.smallInput}
               autoCapitalize="none"
             />
@@ -775,7 +1254,7 @@ export default function NetworkP2PScreen() {
               value={searchTagInput}
               onChangeText={setSearchTagInput}
               placeholder={t.hashtagPlaceholder}
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               style={styles.smallInput}
               autoCapitalize="none"
             />
@@ -798,20 +1277,62 @@ export default function NetworkP2PScreen() {
               value={composeText}
               onChangeText={setComposeText}
               placeholder={t.composeHint}
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               multiline
               style={styles.composeInput}
             />
+            <Pressable
+              onPress={pickComposeMedia}
+              disabled={posting || composeMedia.length >= MAX_COMPOSE_ATTACHMENTS}
+              style={[
+                styles.composeAttachBtn,
+                (posting || composeMedia.length >= MAX_COMPOSE_ATTACHMENTS) &&
+                  styles.btnDisabled,
+              ]}
+            >
+              <Text style={styles.composeAttachBtnText}>📎 {t.composeAddMedia}</Text>
+            </Pressable>
+            {composeMedia.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.composeMediaScroll}
+                contentContainerStyle={styles.composeMediaRow}
+              >
+                {composeMedia.map((m) => (
+                  <View key={m.id} style={styles.composeMediaItem}>
+                    {m.kind === 'image' ? (
+                      <Image source={{ uri: m.localUri }} style={styles.composeMediaThumb} />
+                    ) : (
+                      <View style={[styles.composeMediaThumb, styles.composeVideoThumb]}>
+                        <Text style={styles.composeVideoIcon}>▶</Text>
+                      </View>
+                    )}
+                    <Pressable
+                      onPress={() => removeComposeMedia(m.id)}
+                      style={styles.composeMediaRemove}
+                      hitSlop={8}
+                      accessibilityLabel={t.composeRemoveMedia}
+                    >
+                      <Text style={styles.composeMediaRemoveText}>×</Text>
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+            ) : null}
+            {posting && composeMedia.length > 0 ? (
+              <Text style={styles.composeUploadingLabel}>{t.composeUploadingMedia}</Text>
+            ) : null}
             <View style={styles.composeActions}>
-              <Pressable onPress={() => setComposeOpen(false)} style={styles.btnGhost}>
+              <Pressable onPress={closeCompose} style={styles.btnGhost}>
                 <Text style={styles.btnGhostText}>{t.cancel}</Text>
               </Pressable>
               <Pressable
                 onPress={publishNote}
-                disabled={posting || !composeText.trim()}
+                disabled={posting || !canPublishCompose}
                 style={[
                   styles.btnPrimary,
-                  (posting || !composeText.trim()) && styles.btnDisabled,
+                  (posting || !canPublishCompose) && styles.btnDisabled,
                 ]}
               >
                 <Text style={styles.btnPrimaryText}>
@@ -841,7 +1362,7 @@ export default function NetworkP2PScreen() {
                 setProfileDraft((p) => ({ ...p, displayName: v }))
               }
               placeholder={t.profileNickname}
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               style={styles.smallInput}
             />
             <Text style={styles.composeHint}>{t.profilePicture}</Text>
@@ -851,7 +1372,7 @@ export default function NetworkP2PScreen() {
                 setProfileDraft((p) => ({ ...p, pictureUrl: v }))
               }
               placeholder="https://…"
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               style={styles.smallInput}
               autoCapitalize="none"
             />
@@ -862,7 +1383,7 @@ export default function NetworkP2PScreen() {
                 setProfileDraft((p) => ({ ...p, nip05: v }))
               }
               placeholder="you@domain.com"
-              placeholderTextColor={MUTED}
+              placeholderTextColor={palette.muted}
               style={styles.smallInput}
               autoCapitalize="none"
             />
@@ -968,44 +1489,71 @@ export default function NetworkP2PScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: BG },
+function createNetworkP2PStyles(c: SocialLayerColors) {
+  return StyleSheet.create({
+  root: { flex: 1, backgroundColor: c.bg },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: LINE,
+    borderBottomColor: c.line,
   },
   menuBtn: { paddingRight: 8, paddingVertical: 4 },
-  menuIcon: { color: TEXT, fontSize: 22, fontWeight: '600' },
+  menuIcon: { color: c.text, fontSize: 22, fontWeight: '600' },
   headerAvatarBtn: { marginRight: 10 },
   headerAvatar: { width: 34, height: 34, borderRadius: 17 },
   latestBtn: { flex: 1, flexDirection: 'row', alignItems: 'center' },
-  latestText: { color: TEXT, fontSize: 16, fontWeight: '600', flexShrink: 1 },
-  chev: { color: MUTED, fontSize: 14 },
+  latestText: { color: c.text, fontSize: 16, fontWeight: '600', flexShrink: 1 },
+  chev: { color: c.muted, fontSize: 14 },
   searchBtn: { padding: 8 },
-  searchIcon: { color: TEXT, fontSize: 20 },
-  identityBar: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: SURFACE,
+  searchIcon: { color: c.text, fontSize: 20 },
+  nostrBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: c.surface,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: LINE,
+    borderBottomColor: c.line,
+    gap: 8,
   },
-  identityRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' },
-  identityLabel: { color: MUTED, fontSize: 11, letterSpacing: 0.5 },
-  verifiedBadge: { color: ACCENT, fontSize: 11, fontWeight: '600' },
-  identityName: {
-    color: TEXT,
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: 6,
-    lineHeight: 24,
+  nostrBarLabel: {
+    color: c.text,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.4,
   },
-  identitySubline: { color: MUTED, fontSize: 11, marginTop: 6, lineHeight: 16 },
-  identityBtnGrid: { marginTop: 10 },
+  nostrBarMeta: {
+    flex: 1,
+    color: c.muted,
+    fontSize: 11,
+    lineHeight: 14,
+  },
+  nostrBarBadge: { color: c.accent, fontSize: 11, fontWeight: '700' },
+  nostrBarSpinner: { marginLeft: 2 },
+  configThemeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 10,
+  },
+  configThemeChip: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  configThemeChipActive: {
+    backgroundColor: c.accent,
+    borderColor: c.accent,
+  },
+  configThemeChipText: { color: '#f5f5f5', fontSize: 12, fontWeight: '600' },
+  configThemeChipTextActive: { color: '#fff' },
+  identityBtnGrid: { marginTop: 4 },
   identityBtnRow: {
     flexDirection: 'row',
     marginBottom: 8,
@@ -1018,13 +1566,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: LINE,
-    backgroundColor: '#111',
+    borderColor: 'rgba(255,255,255,0.35)',
+    backgroundColor: 'rgba(0,0,0,0.35)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   identityGridBtnText: {
-    color: ACCENT,
+    color: c.accent,
     fontSize: 13,
     fontWeight: '700',
     textAlign: 'center',
@@ -1034,53 +1582,45 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
   },
   copyChipSpaced: { marginRight: 8 },
-  copyChipText: { color: ACCENT, fontSize: 12, fontWeight: '600' },
-  relayBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-  },
-  relayText: { color: MUTED, fontSize: 12 },
+  copyChipText: { color: c.accent, fontSize: 12, fontWeight: '600' },
   emptyHint: {
-    color: MUTED,
+    color: c.muted,
     fontSize: 13,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
-  sep: { height: StyleSheet.hairlineWidth, backgroundColor: LINE, marginLeft: 58 },
+  sep: { height: StyleSheet.hairlineWidth, backgroundColor: c.line, marginLeft: 58 },
   postWrap: { paddingVertical: 12, paddingHorizontal: 12 },
-  repostBanner: { color: MUTED, fontSize: 12, marginBottom: 6, marginLeft: 46 },
+  repostBanner: { color: c.muted, fontSize: 12, marginBottom: 6, marginLeft: 46 },
   postRow: { flexDirection: 'row', alignItems: 'flex-start' },
   avatar: { width: 40, height: 40, borderRadius: 20, marginRight: 10 },
   postMain: { flex: 1 },
   nameRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center' },
-  displayName: { color: TEXT, fontSize: 15, fontWeight: '700' },
-  verified: { color: ACCENT, fontSize: 14 },
-  nip05: { color: MUTED, fontSize: 13, flexShrink: 1 },
-  time: { color: MUTED, fontSize: 13 },
-  body: { color: TEXT, fontSize: 15, lineHeight: 21, marginTop: 4 },
+  displayName: { color: c.text, fontSize: 15, fontWeight: '700' },
+  verified: { color: c.accent, fontSize: 14 },
+  nip05: { color: c.muted, fontSize: 13, flexShrink: 1 },
+  time: { color: c.muted, fontSize: 13 },
+  body: { color: c.text, fontSize: 15, lineHeight: 21, marginTop: 4 },
   embedImage: {
     marginTop: 10,
     width: '100%',
     aspectRatio: 16 / 10,
     borderRadius: 10,
-    backgroundColor: SURFACE,
+    backgroundColor: c.surface,
   },
   videoBox: { marginTop: 10, borderRadius: 10, overflow: 'hidden' },
-  videoPoster: { width: '100%', aspectRatio: 16 / 9, backgroundColor: SURFACE },
-  videoPosterFallback: { backgroundColor: '#111' },
+  videoPoster: { width: '100%', aspectRatio: 16 / 9, backgroundColor: c.surface },
+  videoPosterFallback: { backgroundColor: c.elevated },
   videoPlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
   },
   videoPlayText: {
-    color: TEXT,
+    color: c.text,
     fontSize: 28,
     opacity: 0.95,
     textShadowColor: 'rgba(0,0,0,0.6)',
@@ -1091,22 +1631,53 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 8,
     right: 10,
-    color: MUTED,
+    color: c.muted,
     fontSize: 11,
+  },
+  feedLightboxRoot: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.96)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  feedLightboxBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  feedLightboxHint: {
+    position: 'absolute',
+    top: 52,
+    left: 16,
+    right: 16,
+    textAlign: 'center',
+    color: c.muted,
+    fontSize: 13,
+    zIndex: 2,
+  },
+  feedLightboxImageWrap: {
+    width: SCREEN_W,
+    flex: 1,
+    maxHeight: SCREEN_H * 0.9,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  feedLightboxImage: {
+    width: SCREEN_W,
+    height: SCREEN_H * 0.78,
   },
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
     marginTop: 12,
   },
-  actionIcon: { color: MUTED, fontSize: 15, marginRight: 18 },
+  actionIcon: { color: c.muted, fontSize: 15, marginRight: 18 },
   fab: {
     position: 'absolute',
     right: 18,
     width: 52,
     height: 52,
     borderRadius: 26,
-    backgroundColor: ACCENT,
+    backgroundColor: c.accent,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#000',
@@ -1116,6 +1687,65 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   fabPlus: { color: '#fff', fontSize: 28, fontWeight: '300', marginTop: -2 },
+  bottomPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  bottomPanelTitle: {
+    color: '#f5f5f5',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  bottomPanelClose: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  bottomPanelHint: {
+    color: 'rgba(255,255,255,0.88)',
+    fontSize: 13,
+    lineHeight: 19,
+    marginBottom: 12,
+  },
+  bottomPanelBtn: {
+    backgroundColor: c.accent,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  bottomPanelBtnSecondary: {
+    backgroundColor: 'rgba(0,0,0,0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  bottomPanelBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  bottomPanelBtnTextSecondary: {
+    color: '#f5f5f5',
+  },
+  bottomPanelConfig: {
+    maxHeight: '52%',
+    paddingBottom: 8,
+  },
+  bottomPanelConfigSubtitle: {
+    color: 'rgba(255,255,255,0.85)',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 8,
+  },
+  bottomPanelConfigScroll: {
+    maxHeight: 220,
+    marginBottom: 8,
+  },
+  bottomPanelConfigSettingsBtn: {
+    marginBottom: 0,
+  },
   bottomNav: {
     position: 'absolute',
     left: 0,
@@ -1125,23 +1755,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-around',
     paddingTop: 8,
-    backgroundColor: BG,
+    backgroundColor: c.bg,
     borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: LINE,
+    borderTopColor: c.line,
+    zIndex: 21,
   },
   navItem: { padding: 10 },
-  navIcon: { color: MUTED, fontSize: 22 },
+  navIcon: { color: c.muted, fontSize: 22 },
+  navIconActive: { color: c.accent },
   navCenter: {
     width: 48,
     height: 48,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 4,
   },
-  navCenterIcon: { color: TEXT, fontSize: 22 },
+  navCenterIcon: { color: c.text, fontSize: 22 },
   myQrBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.75)',
@@ -1149,22 +1781,22 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   myQrCard: {
-    backgroundColor: SURFACE,
+    backgroundColor: c.surface,
     borderRadius: 16,
     padding: 20,
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
     alignItems: 'center',
   },
-  myQrTitle: { color: TEXT, fontSize: 17, fontWeight: '700' },
-  myQrName: { color: MUTED, fontSize: 14, marginTop: 8, textAlign: 'center' },
+  myQrTitle: { color: c.text, fontSize: 17, fontWeight: '700' },
+  myQrName: { color: c.muted, fontSize: 14, marginTop: 8, textAlign: 'center' },
   myQrQrWrap: {
     marginTop: 16,
     padding: 12,
     backgroundColor: '#fff',
     borderRadius: 12,
   },
-  myQrNpubHint: { color: MUTED, fontSize: 11, marginTop: 12, textAlign: 'center' },
+  myQrNpubHint: { color: c.muted, fontSize: 11, marginTop: 12, textAlign: 'center' },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.6)',
@@ -1172,29 +1804,29 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   modalCard: {
-    backgroundColor: SURFACE,
+    backgroundColor: c.surface,
     borderRadius: 14,
     padding: 18,
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
     maxHeight: '80%',
   },
-  modalTitle: { color: TEXT, fontSize: 18, fontWeight: '700' },
-  modalHint: { color: MUTED, fontSize: 14, marginTop: 10, lineHeight: 20 },
+  modalTitle: { color: c.text, fontSize: 18, fontWeight: '700' },
+  modalHint: { color: c.muted, fontSize: 14, marginTop: 10, lineHeight: 20 },
   filterRow: {
     marginTop: 12,
     paddingVertical: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: LINE,
+    borderBottomColor: c.line,
   },
-  filterRowText: { color: TEXT, fontSize: 16 },
+  filterRowText: { color: c.text, fontSize: 16 },
   smallInput: {
     marginTop: 8,
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
     borderRadius: 10,
     padding: 12,
-    color: TEXT,
+    color: c.text,
     fontSize: 15,
   },
   followList: { maxHeight: 160, marginTop: 12 },
@@ -1204,38 +1836,89 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: LINE,
+    borderBottomColor: c.line,
   },
-  followPk: { color: MUTED, fontSize: 12, flex: 1, marginRight: 8 },
-  followRemove: { color: ACCENT, fontSize: 13, fontWeight: '600' },
+  followPk: { color: c.muted, fontSize: 12, flex: 1, marginRight: 8 },
+  followRemove: { color: c.accent, fontSize: 13, fontWeight: '600' },
   modalClose: { marginTop: 16, alignSelf: 'flex-end' },
-  modalCloseText: { color: ACCENT, fontSize: 15, fontWeight: '600' },
+  modalCloseText: { color: c.accent, fontSize: 15, fontWeight: '600' },
   composeBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.75)',
     justifyContent: 'flex-end',
   },
   composeCard: {
-    backgroundColor: SURFACE,
+    backgroundColor: c.surface,
     borderTopLeftRadius: 16,
     borderTopRightRadius: 16,
     padding: 18,
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
   },
-  composeTitle: { color: TEXT, fontSize: 18, fontWeight: '700' },
-  composeHint: { color: MUTED, fontSize: 13, marginTop: 6 },
-  composeMicroHint: { color: MUTED, fontSize: 11, marginTop: 4, lineHeight: 15 },
+  composeTitle: { color: c.text, fontSize: 18, fontWeight: '700' },
+  composeHint: { color: c.muted, fontSize: 13, marginTop: 6 },
+  composeMicroHint: { color: c.muted, fontSize: 11, marginTop: 4, lineHeight: 15 },
   composeInput: {
     marginTop: 12,
     minHeight: 120,
-    color: TEXT,
+    color: c.text,
     fontSize: 16,
     textAlignVertical: 'top',
     borderWidth: 1,
-    borderColor: LINE,
+    borderColor: c.line,
     borderRadius: 10,
     padding: 12,
+  },
+  composeAttachBtn: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: c.line,
+    backgroundColor: c.elevated,
+  },
+  composeAttachBtnText: {
+    color: c.accent,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  composeMediaScroll: { marginTop: 10, maxHeight: 96 },
+  composeMediaRow: { gap: 10, paddingRight: 8 },
+  composeMediaItem: { position: 'relative' },
+  composeMediaThumb: {
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    backgroundColor: c.elevated,
+  },
+  composeVideoThumb: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composeVideoIcon: { color: c.text, fontSize: 22 },
+  composeMediaRemove: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#c62828',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composeMediaRemoveText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  composeUploadingLabel: {
+    color: c.muted,
+    fontSize: 12,
+    marginTop: 8,
   },
   composeActions: {
     flexDirection: 'row',
@@ -1243,9 +1926,9 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
   btnGhost: { paddingVertical: 10, paddingHorizontal: 14, marginRight: 8 },
-  btnGhostText: { color: MUTED, fontSize: 15 },
+  btnGhostText: { color: c.muted, fontSize: 15 },
   btnPrimary: {
-    backgroundColor: ACCENT,
+    backgroundColor: c.accent,
     paddingVertical: 10,
     paddingHorizontal: 18,
     borderRadius: 20,
@@ -1258,8 +1941,9 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingVertical: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: LINE,
+    borderBottomColor: c.line,
   },
-  walletChain: { color: TEXT, fontWeight: '700', fontSize: 14 },
-  walletAddr: { color: MUTED, fontSize: 13, marginTop: 4 },
-});
+  walletChain: { color: c.text, fontWeight: '700', fontSize: 14 },
+  walletAddr: { color: c.muted, fontSize: 13, marginTop: 4 },
+  });
+}

@@ -35,6 +35,7 @@ import {
 import { useMetaMaskUnavailable } from '../context/MetaMaskUnavailableContext';
 import { useVerificationAccess } from '../context/VerificationAccessContext';
 import { formatAddressForUi } from '../utils/addressDisplay';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 function shortenAddress(addr: string): string {
   if (!addr || addr.length < 12) return addr;
@@ -91,6 +92,7 @@ const translations = (language: 'en' | 'es') => ({
 
 type EvmExtrasProps = {
   language: 'en' | 'es';
+  brand: string;
   onPasteImport: () => void;
   onGenerateLink4Deal: () => void;
   pasteImporting: boolean;
@@ -99,6 +101,7 @@ type EvmExtrasProps = {
 
 function WalletEvmImportBlock({
   language,
+  brand,
   onPasteImport,
   onGenerateLink4Deal,
   pasteImporting,
@@ -113,22 +116,22 @@ function WalletEvmImportBlock({
       <Button
         size="sm"
         variant="outline"
-        borderColor="#00704A"
+        borderColor={brand}
         onPress={onPasteImport}
         isDisabled={pasteImporting || generating}
       >
-        <ButtonText color="#00704A">
+        <ButtonText color={brand}>
           {pasteImporting ? t.pasteReading : t.importClipboard}
         </ButtonText>
       </Button>
       <Button
         size="sm"
         variant="outline"
-        borderColor="#00704A"
+        borderColor={brand}
         onPress={onGenerateLink4Deal}
         isDisabled={generating || pasteImporting}
       >
-        <ButtonText color="#00704A">
+        <ButtonText color={brand}>
           {generating ? t.generating : t.generateLink4Deal}
         </ButtonText>
       </Button>
@@ -141,6 +144,7 @@ function WalletAddressSectionManualOnly({
   language,
   onAddressesChange,
 }: WalletAddressSectionProps) {
+  const { brand } = useBrandTheme();
   const { revealWalletAddresses } = useVerificationAccess();
   const [addresses, setAddresses] = useState<WalletAddressItem[]>([]);
   const [manualAddress, setManualAddress] = useState('');
@@ -286,6 +290,7 @@ function WalletAddressSectionManualOnly({
       </Text>
       <WalletEvmImportBlock
         language={language}
+        brand={brand}
         onPasteImport={handlePasteImport}
         onGenerateLink4Deal={handleGenerateLink4Deal}
         pasteImporting={pasteImporting}
@@ -305,7 +310,7 @@ function WalletAddressSectionManualOnly({
               autoCorrect={false}
             />
           </Input>
-          <Button size="sm" bg="#00704A" onPress={handleAddManual} isDisabled={adding}>
+          <Button size="sm" bg={brand} onPress={handleAddManual} isDisabled={adding}>
             <ButtonText>{t.addButton}</ButtonText>
           </Button>
         </HStack>
@@ -323,7 +328,7 @@ function WalletAddressSectionManualOnly({
               borderRadius="$lg"
               p="$3"
               borderLeftWidth={4}
-              borderLeftColor={item.isDefault ? '#00704A' : '$borderLight300'}
+              borderLeftColor={item.isDefault ? {brand} : '$borderLight300'}
             >
               <HStack justifyContent="space-between" alignItems="center" flexWrap="wrap">
                 <VStack flex={1} space="xs">
@@ -334,7 +339,7 @@ function WalletAddressSectionManualOnly({
                     {formatAddressForUi(item.address, revealWalletAddresses)}
                   </Text>
                   {item.isDefault && (
-                    <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                    <Text fontSize="$xs" color={brand} fontWeight="$medium">
                       {t.defaultLabel}
                     </Text>
                   )}
@@ -342,7 +347,7 @@ function WalletAddressSectionManualOnly({
                 <HStack space="xs">
                   {!item.isDefault && (
                     <Pressable onPress={() => handleSetDefault(item.id)}>
-                      <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                      <Text fontSize="$xs" color={brand} fontWeight="$medium">
                         {t.setDefault}
                       </Text>
                     </Pressable>
@@ -365,6 +370,7 @@ function WalletAddressSectionWithMetaMask({
   language,
   onAddressesChange,
 }: WalletAddressSectionProps) {
+  const { brand } = useBrandTheme();
   const { revealWalletAddresses } = useVerificationAccess();
   const [addresses, setAddresses] = useState<WalletAddressItem[]>([]);
   const [manualAddress, setManualAddress] = useState('');
@@ -540,17 +546,18 @@ function WalletAddressSectionWithMetaMask({
         <Button
           size="md"
           variant="outline"
-          borderColor="#00704A"
+          borderColor={brand}
           onPress={handleConnectMetaMask}
           isDisabled={connecting}
         >
-          <ButtonText color="#00704A">
+          <ButtonText color={brand}>
             {connecting ? t.connecting : t.connectMetaMask}
           </ButtonText>
         </Button>
       )}
       <WalletEvmImportBlock
         language={language}
+        brand={brand}
         onPasteImport={handlePasteImport}
         onGenerateLink4Deal={handleGenerateLink4Deal}
         pasteImporting={pasteImporting}
@@ -570,7 +577,7 @@ function WalletAddressSectionWithMetaMask({
               autoCorrect={false}
             />
           </Input>
-          <Button size="sm" bg="#00704A" onPress={handleAddManual} isDisabled={adding}>
+          <Button size="sm" bg={brand} onPress={handleAddManual} isDisabled={adding}>
             <ButtonText>{t.addButton}</ButtonText>
           </Button>
         </HStack>
@@ -588,7 +595,7 @@ function WalletAddressSectionWithMetaMask({
               borderRadius="$lg"
               p="$3"
               borderLeftWidth={4}
-              borderLeftColor={item.isDefault ? '#00704A' : '$borderLight300'}
+              borderLeftColor={item.isDefault ? {brand} : '$borderLight300'}
             >
               <HStack justifyContent="space-between" alignItems="center" flexWrap="wrap">
                 <VStack flex={1} space="xs">
@@ -599,7 +606,7 @@ function WalletAddressSectionWithMetaMask({
                     {formatAddressForUi(item.address, revealWalletAddresses)}
                   </Text>
                   {item.isDefault && (
-                    <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                    <Text fontSize="$xs" color={brand} fontWeight="$medium">
                       {t.defaultLabel}
                     </Text>
                   )}
@@ -607,7 +614,7 @@ function WalletAddressSectionWithMetaMask({
                 <HStack space="xs">
                   {!item.isDefault && (
                     <Pressable onPress={() => handleSetDefault(item.id)}>
-                      <Text fontSize="$xs" color="#00704A" fontWeight="$medium">
+                      <Text fontSize="$xs" color={brand} fontWeight="$medium">
                         {t.setDefault}
                       </Text>
                     </Pressable>

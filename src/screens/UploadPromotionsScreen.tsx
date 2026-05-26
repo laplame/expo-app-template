@@ -3,7 +3,7 @@
  * Ref: assets/docs/upload_promo.md
  * Si falta algo (error, validación), se ofrece redirigir al sitio web.
  */
-import React, { useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { ScrollView, Alert, Linking, Platform, ActionSheetIOS, Pressable as RNPressable, Image, Switch, ActivityIndicator } from 'react-native';
 import * as Location from 'expo-location';
 
@@ -42,7 +42,9 @@ import {
   SITE_PROMO_URLS,
   AnalyzeImageData,
 } from '../services/promotionsApi';
+import { hasBasicRegistration } from '../services/storage';
 import { logPromotionDebug, logPromotionWarn } from '../utils/uploadPromotionLog';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 function formatDateYMD(d: Date): string {
   const y = d.getFullYear();
@@ -102,8 +104,10 @@ const QUICK_TEMPLATES = [
 export default function UploadPromotionsScreen() {
   const navigation = useNavigation();
   const { language, currency, userName } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
   const { addLuxaeBalance } = useWalletBalance();
-  const isRegistered = !!(userName?.trim());
+  const [basicRegistrationOk, setBasicRegistrationOk] = useState<boolean | null>(null);
+  const isRegistered = !!(userName?.trim()) || basicRegistrationOk === true;
   const [loading, setLoading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
@@ -149,6 +153,20 @@ export default function UploadPromotionsScreen() {
   const [isPermanent, setIsPermanent] = useState(false);
   const [showPickerFrom, setShowPickerFrom] = useState(false);
   const [showPickerUntil, setShowPickerUntil] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    hasBasicRegistration()
+      .then((ok) => {
+        if (mounted) setBasicRegistrationOk(ok);
+      })
+      .catch(() => {
+        if (mounted) setBasicRegistrationOk(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [userName]);
 
   const t = useMemo(
     () => ({
@@ -206,6 +224,10 @@ export default function UploadPromotionsScreen() {
         language === 'es'
           ? 'Tu promoción quedó registrada y debe ser verificada antes de mostrarse como activa a los usuarios. Te avisaremos o revisa el estado en el detalle cuando esté aprobada.'
           : 'Your promotion was saved and must be verified before it appears as active to users. You will be notified, or check the detail page for approval status.',
+      simulatedPromotionNotice:
+        language === 'es'
+          ? 'El servidor respondió en modo simulado. La promoción no quedó guardada en la base de datos, por eso no aparecerá en el feed de promociones.'
+          : 'The server responded in simulated mode. The promotion was not saved in the database, so it will not appear in the promotions feed.',
       reviewBeforePublish:
         language === 'es'
           ? 'Al publicar, la promoción se envía al servidor en estado borrador y queda pendiente de verificación del equipo.'
@@ -227,6 +249,10 @@ export default function UploadPromotionsScreen() {
         language === 'es'
           ? 'Con GPS activado, indica latitud, longitud válidas y un radio entre 50 y 50000 m.'
           : 'With GPS on, enter valid latitude, longitude and a radius between 50 and 50000 m.',
+      gpsQrOnlyError:
+        language === 'es'
+          ? 'Las promociones geolocalizadas se redimen en el mundo real con cupón QR. Cambia el tipo a Cupón con QR o desactiva GPS.'
+          : 'Geolocated promotions are redeemed in the real world with QR coupons. Switch to QR coupon or turn GPS off.',
       sectionPromoKind: language === 'es' ? 'Tipo de promoción' : 'Promotion type',
       sectionPromoKindHint:
         language === 'es'
@@ -436,6 +462,11 @@ export default function UploadPromotionsScreen() {
       orig > 0 ? Math.round(((orig - curr) / orig) * 100) : 0;
 
     const gpsOn = !!currentForm.gpsActivation;
+    const isRedirectMode = currentForm.promotionMode === 'redirect';
+    if (gpsOn && isRedirectMode) {
+      setError(t.gpsQrOnlyError);
+      return null;
+    }
     const latStr = String(currentForm.storeLatitude ?? '').trim().replace(',', '.');
     const lngStr = String(currentForm.storeLongitude ?? '').trim().replace(',', '.');
     const lat = parseFloat(latStr);
@@ -482,6 +513,9 @@ export default function UploadPromotionsScreen() {
       : 'percentage';
     const cashback = Number((currentForm.cashbackValue ?? '').trim());
 
+    const redemptionType = isRedirectMode ? 'online_redirect' : 'in_store_qr';
+    const fulfillmentType = isRedirectMode ? 'online' : 'physical_store';
+
     return {
       title,
       description: description || undefined,
@@ -497,16 +531,27 @@ export default function UploadPromotionsScreen() {
       termsAndConditions: (currentForm.termsAndConditions ?? '').trim() || undefined,
       storeName: (currentForm.storeName ?? '').trim() || '',
       storeLocation: storeLocation,
-      isPhysicalStore: false,
+      isPhysicalStore: fulfillmentType === 'physical_store',
       validFrom,
       validUntil,
       /** Recibida en servidor; visible en listados públicos tras revisión (draft / moderación). */
       status: 'draft',
       gpsActivationEnabled: gpsOn,
       locationRadiusMeters,
-      redirectInsteadOfQr: currentForm.promotionMode === 'redirect',
+      redemptionType,
+      fulfillmentType,
+      geoRedemption:
+        gpsOn && coordinates && locationRadiusMeters != null
+          ? {
+              enabled: true,
+              coordinates,
+              radiusMeters: locationRadiusMeters,
+              validationMoment: 'coupon_issue',
+            }
+          : undefined,
+      redirectInsteadOfQr: isRedirectMode,
       redirectToUrl:
-        currentForm.promotionMode === 'redirect'
+        isRedirectMode
           ? (currentForm.redirectToUrl ?? '').trim() || undefined
           : undefined,
     };
@@ -538,8 +583,21 @@ export default function UploadPromotionsScreen() {
       if (result.ok) {
         setSuccess(true);
         setPricesFromIa(false);
-        await addLuxaeBalance(10);
-        const promoId = (result.data as any)?.id as string | undefined;
+        const resultData = (result.data ?? {}) as Record<string, unknown>;
+        const promoId = String(resultData.id ?? resultData._id ?? '');
+        const serverMode = String(resultData.mode ?? '').toLowerCase();
+        const isSimulated = serverMode === 'simulated' || promoId.startsWith('sim-');
+        if (!isSimulated) {
+          await addLuxaeBalance(10, {
+            titleEs: 'Recompensa por subir promoción',
+            titleEn: 'Reward for uploading a promotion',
+          });
+        }
+        const createdStatus = String(resultData.status ?? payload.status ?? '').toLowerCase();
+        const canOpenDetail =
+          promoId.length > 0 &&
+          !isSimulated &&
+          createdStatus !== 'draft';
         setForm({
           title: '',
           description: '',
@@ -568,9 +626,9 @@ export default function UploadPromotionsScreen() {
         });
         setIsPermanent(false);
         setImages([]);
-        const detailUrl = promoId ? SITE_PROMO_URLS.promotionDetail(promoId) : null;
+        const detailUrl = canOpenDetail ? SITE_PROMO_URLS.promotionDetail(promoId) : null;
         const bodyMessage =
-          `${t.earnedTokens}\n\n${t.pendingVerificationNotice}` +
+          `${isSimulated ? t.simulatedPromotionNotice : `${t.earnedTokens}\n\n${t.pendingVerificationNotice}`}` +
           (detailUrl ? `\n\n${language === 'es' ? '¿Abrir el detalle de la promoción?' : 'Open promotion details?'}` : '');
         Alert.alert(
           t.promotionSubmittedTitle,
@@ -604,13 +662,22 @@ export default function UploadPromotionsScreen() {
     }
   };
 
+  if (basicRegistrationOk === null && !userName?.trim()) {
+    return (
+      <Box flex={1} bg="$white" justifyContent="center" alignItems="center">
+        <StatusBar style="dark" />
+        <ActivityIndicator color={brand} />
+      </Box>
+    );
+  }
+
   if (!isRegistered) {
     return (
       <Box flex={1} bg="$white">
         <StatusBar style="dark" />
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 80, flexGrow: 1, justifyContent: 'center', minHeight: 400 }}>
           <VStack space="lg" alignItems="center">
-            <Box bg="#00704A" borderRadius="$xl" p="$5" width="100%">
+            <Box bg={brand} borderRadius="$xl" p="$5" width="100%">
               <Text fontSize="$xl" fontWeight="$bold" color="$white">
                 {t.title}
               </Text>
@@ -622,7 +689,7 @@ export default function UploadPromotionsScreen() {
               <Text fontSize="$md" color="$textLight700" textAlign="center" mb="$4">
                 {t.mustSignUp}
               </Text>
-              <Button size="lg" bg="#00704A" onPress={() => (navigation as any).navigate('NYC')}>
+              <Button size="lg" bg={brand} onPress={() => (navigation as any).navigate('NYC')}>
                 <ButtonText>{t.goToSignUp}</ButtonText>
               </Button>
             </Box>
@@ -644,7 +711,7 @@ export default function UploadPromotionsScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <VStack space="md">
-          <Box bg="#00704A" borderRadius="$xl" p="$4">
+          <Box bg={brand} borderRadius="$xl" p="$4">
             <HStack justifyContent="space-between" alignItems="flex-start">
               <VStack flex={1}>
                 <Text fontSize="$xl" fontWeight="$bold" color="$white">
@@ -665,8 +732,8 @@ export default function UploadPromotionsScreen() {
             <Text fontSize="$sm" fontWeight="$semibold" color="$textLight700">{t.quickTemplates}</Text>
             <HStack space="sm" flexWrap="wrap">
               {QUICK_TEMPLATES.map((tmpl) => (
-                <Button key={tmpl.key} size="sm" variant="outline" borderColor="#00704A" onPress={() => applyTemplate(tmpl.key)}>
-                  <ButtonText color="#00704A">{language === 'es' ? tmpl.es : tmpl.en}</ButtonText>
+                <Button key={tmpl.key} size="sm" variant="outline" borderColor={brand} onPress={() => applyTemplate(tmpl.key)}>
+                  <ButtonText color={brand}>{language === 'es' ? tmpl.es : tmpl.en}</ButtonText>
                 </Button>
               ))}
             </HStack>
@@ -682,7 +749,7 @@ export default function UploadPromotionsScreen() {
                 minHeight: 140,
                 borderWidth: 2,
                 borderStyle: 'dashed',
-                borderColor: pressed ? '#00704A' : '#CBD5E0',
+                borderColor: pressed ? brand : '#CBD5E0',
                 borderRadius: 12,
                 backgroundColor: pressed ? 'rgba(0,112,74,0.05)' : '#F8FAFC',
                 alignItems: 'center',
@@ -716,7 +783,7 @@ export default function UploadPromotionsScreen() {
               <VStack space="xs">
                 <Text color="$error600" fontSize="$sm">{analyzeError}</Text>
                 <Button size="sm" variant="link" alignSelf="flex-start" onPress={openWebForm}>
-                  <ButtonText color="#00704A">{t.openWebForm}</ButtonText>
+                  <ButtonText color={brand}>{t.openWebForm}</ButtonText>
                 </Button>
               </VStack>
             ) : null}
@@ -744,7 +811,7 @@ export default function UploadPromotionsScreen() {
                 <Pressable
                   onPress={() => setForm((f) => ({ ...f, promotionMode: 'qr' }))}
                   borderWidth={2}
-                  borderColor={form.promotionMode === 'qr' ? '#00704A' : '$borderLight300'}
+                  borderColor={form.promotionMode === 'qr' ? brand : '$borderLight300'}
                   borderRadius="$md"
                   p="$3"
                   bg={form.promotionMode === 'qr' ? 'rgba(0,112,74,0.08)' : '$white'}
@@ -754,13 +821,13 @@ export default function UploadPromotionsScreen() {
                     <Text fontSize="$sm" fontWeight="$semibold" color="$textLight900" flex={1}>
                       {t.modeQr}
                     </Text>
-                    {form.promotionMode === 'qr' ? <Text color="#00704A">✓</Text> : null}
+                    {form.promotionMode === 'qr' ? <Text color={brand}>✓</Text> : null}
                   </HStack>
                 </Pressable>
                 <Pressable
-                  onPress={() => setForm((f) => ({ ...f, promotionMode: 'redirect' }))}
+                  onPress={() => setForm((f) => ({ ...f, promotionMode: 'redirect', gpsActivation: false }))}
                   borderWidth={2}
-                  borderColor={form.promotionMode === 'redirect' ? '#00704A' : '$borderLight300'}
+                  borderColor={form.promotionMode === 'redirect' ? brand : '$borderLight300'}
                   borderRadius="$md"
                   p="$3"
                   bg={form.promotionMode === 'redirect' ? 'rgba(0,112,74,0.08)' : '$white'}
@@ -770,7 +837,7 @@ export default function UploadPromotionsScreen() {
                     <Text fontSize="$sm" fontWeight="$semibold" color="$textLight900" flex={1}>
                       {t.modeRedirect}
                     </Text>
-                    {form.promotionMode === 'redirect' ? <Text color="#00704A">✓</Text> : null}
+                    {form.promotionMode === 'redirect' ? <Text color={brand}>✓</Text> : null}
                   </HStack>
                 </Pressable>
               </VStack>
@@ -811,12 +878,12 @@ export default function UploadPromotionsScreen() {
                       onPress={() => setForm((f) => ({ ...f, promoCurrency: c }))}
                       flex={1}
                       borderWidth={2}
-                      borderColor={form.promoCurrency === c ? '#00704A' : '$borderLight300'}
+                      borderColor={form.promoCurrency === c ? brand : '$borderLight300'}
                       borderRadius="$md"
                       p="$3"
                       bg={form.promoCurrency === c ? 'rgba(0,112,74,0.08)' : '$backgroundLight50'}
                     >
-                      <Text textAlign="center" fontWeight="$semibold" color={form.promoCurrency === c ? '#00704A' : '$textLight700'}>
+                      <Text textAlign="center" fontWeight="$semibold" color={form.promoCurrency === c ? brand : '$textLight700'}>
                         {c === 'USD' ? t.currencyUsd : t.currencyMxn}
                       </Text>
                     </Pressable>
@@ -854,10 +921,10 @@ export default function UploadPromotionsScreen() {
                   </Input>
                 </FormControl>
                 <Box minWidth={72} bg="rgba(0,112,74,0.12)" borderRadius="$md" p="$3" borderWidth={1} borderColor="rgba(0,112,74,0.35)">
-                  <Text fontSize="$xs" color="#00704A" fontWeight="$semibold">
+                  <Text fontSize="$xs" color={brand} fontWeight="$semibold">
                     {t.discountLabel}
                   </Text>
-                  <Text fontSize="$md" fontWeight="$bold" color="#00704A">
+                  <Text fontSize="$md" fontWeight="$bold" color={brand}>
                     {pricePreview.discountPct}%
                   </Text>
                 </Box>
@@ -888,15 +955,15 @@ export default function UploadPromotionsScreen() {
                     key={value}
                     onPress={() => setForm((f) => ({ ...f, offerType: value }))}
                     borderWidth={1}
-                    borderColor={form.offerType === value ? '#00704A' : '$borderLight300'}
+                    borderColor={form.offerType === value ? brand : '$borderLight300'}
                     borderRadius="$md"
                     px="$3"
                     py="$2"
-                    bg={form.offerType === value ? 'rgba(0,112,74,0.1)' : '$white'}
+                    bg={form.offerType === value ? brandBg : '$white'}
                   >
                     <Text
                       fontSize="$sm"
-                      color={form.offerType === value ? '#00704A' : '$textLight800'}
+                      color={form.offerType === value ? brand : '$textLight800'}
                       fontWeight={form.offerType === value ? '$semibold' : '$normal'}
                     >
                       {label}
@@ -989,9 +1056,9 @@ export default function UploadPromotionsScreen() {
               </Text>
               <Switch
                 value={form.gpsActivation}
-                onValueChange={(v) => setForm((f) => ({ ...f, gpsActivation: v }))}
+                onValueChange={(v) => setForm((f) => ({ ...f, gpsActivation: v, promotionMode: v ? 'qr' : f.promotionMode }))}
                 trackColor={{ false: '#CBD5E0', true: '#a8d4c4' }}
-                thumbColor={form.gpsActivation ? '#00704A' : '#f4f4f5'}
+                thumbColor={form.gpsActivation ? brand : '#f4f4f5'}
               />
             </HStack>
             <Text fontSize="$xs" color="$textLight600" mb="$3">
@@ -1002,14 +1069,14 @@ export default function UploadPromotionsScreen() {
                 <Button
                   size="md"
                   variant="outline"
-                  borderColor="#00704A"
+                  borderColor={brand}
                   onPress={fetchLocationFromDevice}
                   isDisabled={fetchingGps}
                 >
                   {fetchingGps ? (
-                    <ActivityIndicator color="#00704A" />
+                    <ActivityIndicator color={brand} />
                   ) : (
-                    <ButtonText color="#00704A">{t.getLocationFromDevice}</ButtonText>
+                    <ButtonText color={brand}>{t.getLocationFromDevice}</ButtonText>
                   )}
                 </Button>
                 <HStack space="md">
@@ -1090,8 +1157,8 @@ export default function UploadPromotionsScreen() {
           <FormControl>
             <FormControlLabel><FormControlLabelText>{t.fieldValidUntil}</FormControlLabelText></FormControlLabel>
             {isPermanent ? (
-              <Box bg="rgba(0, 112, 74, 0.1)" borderRadius="$md" px="$4" py="$3" minHeight={44} justifyContent="center" borderWidth={1} borderColor="#00704A">
-                <Text color="#00704A" fontWeight="$semibold">{t.permanentLabel}</Text>
+              <Box bg={brandBg} borderRadius="$md" px="$4" py="$3" minHeight={44} justifyContent="center" borderWidth={1} borderColor={brand}>
+                <Text color={brand} fontWeight="$semibold">{t.permanentLabel}</Text>
               </Box>
             ) : hasDatePicker && DateTimePicker ? (
               <>
@@ -1118,8 +1185,8 @@ export default function UploadPromotionsScreen() {
               <Input><InputField value={form.validUntil} onChangeText={(v) => setForm((f) => ({ ...f, validUntil: v }))} placeholder="YYYY-MM-DD" /></Input>
             )}
           </FormControl>
-          <Button size="md" variant={isPermanent ? 'solid' : 'outline'} bg={isPermanent ? '#00704A' : undefined} borderColor="#00704A" onPress={() => setIsPermanent((p) => !p)}>
-            <ButtonText color={isPermanent ? '$white' : '#00704A'}>∞ {t.permanentPromo}</ButtonText>
+          <Button size="md" variant={isPermanent ? 'solid' : 'outline'} bg={isPermanent ? brand : undefined} borderColor={brand} onPress={() => setIsPermanent((p) => !p)}>
+            <ButtonText color={isPermanent ? '$white' : brand}>∞ {t.permanentPromo}</ButtonText>
           </Button>
 
             {error ? <Text color="$error600">{error}</Text> : null}
@@ -1136,12 +1203,12 @@ export default function UploadPromotionsScreen() {
               </Text>
             </Box>
 
-            <Button size="lg" bg="#00704A" onPress={handleSubmit} isDisabled={loading}>
+            <Button size="lg" bg={brand} onPress={handleSubmit} isDisabled={loading}>
               <ButtonText>{loading ? (language === 'es' ? 'Enviando...' : 'Sending...') : t.submit}</ButtonText>
             </Button>
 
             <Button size="sm" variant="link" onPress={openWebForm}>
-              <ButtonText color="#00704A" fontSize="$sm">🔗 {t.submitFromWeb}</ButtonText>
+              <ButtonText color={brand} fontSize="$sm">🔗 {t.submitFromWeb}</ButtonText>
             </Button>
           </VStack>
         </VStack>

@@ -1,6 +1,6 @@
 {
   "ecosystem": "Link4Deal + BizneAI",
-  "version": "1.0",
+  "version": "1.1",
   "glossary": [
     {
       "term": "Advertencia: borrar la app o los datos",
@@ -161,6 +161,60 @@
       "category": "Cripto",
       "definition": "Token no fungible. Activo digital único en una blockchain, usado a menudo para arte, coleccionables o prueba de propiedad.",
       "definitionEn": "Non-Fungible Token. Unique digital asset on a blockchain, often used for art, collectibles or proof of ownership."
+    },
+    {
+      "term": "Nostr",
+      "category": "Nostr",
+      "definition": "Protocolo abierto y descentralizado para redes sociales y mensajería. Se basa en pares de claves criptográficas, eventos firmados y relays; no depende de una única empresa o servidor central para existir.",
+      "definitionEn": "Open, decentralized protocol for social networks and messaging. It uses cryptographic key pairs, signed events, and relays — there is no single company or central server required for the network to exist."
+    },
+    {
+      "term": "npub",
+      "category": "Nostr",
+      "definition": "Prefijo bech32 que codifica tu clave pública en Nostr (cadena que empieza por «npub1…»). Es seguro compartirla para que otros te identifiquen, te sigan o te envíen notas; no revela tu clave privada.",
+      "definitionEn": "Bech32 prefix encoding your public key on Nostr (a string starting with 'npub1…'). Safe to share so others can identify, follow, or message you; it does not reveal your private key."
+    },
+    {
+      "term": "nsec",
+      "category": "Nostr",
+      "definition": "Prefijo bech32 que codifica tu clave privada en Nostr («nsec1…»). Quien la posee puede firmar y actuar como tú. Guárdala en secreto, no la compartas ni la expongas en capturas, chats o sitios web.",
+      "definitionEn": "Bech32 prefix encoding your private key on Nostr ('nsec1…'). Anyone who has it can sign and act as you. Keep it secret — never share it or expose it in screenshots, chats, or websites."
+    },
+    {
+      "term": "Relay (Nostr)",
+      "category": "Nostr",
+      "definition": "Servidor que recibe, guarda y distribuye eventos Nostr. Los clientes eligen a qué relays conectarse; el contenido que ves depende de qué relays indexan o almacenan esos eventos.",
+      "definitionEn": "Server that receives, stores, and distributes Nostr events. Clients choose which relays to connect to; what you see depends on which relays index or store those events."
+    },
+    {
+      "term": "Evento Nostr",
+      "category": "Nostr",
+      "definition": "Mensaje firmado con tu clave privada que se envía a los relays: puede ser una nota de texto, un perfil, una reacción, etc. Incluye campos como kind, etiquetas (tags) y un identificador único (hash del contenido).",
+      "definitionEn": "A message signed with your private key and sent to relays — can be a text note, profile update, reaction, etc. It includes fields such as kind, tags, and a unique id (content hash)."
+    },
+    {
+      "term": "Kind (tipo de evento)",
+      "category": "Nostr",
+      "definition": "Número que indica el tipo de evento (por ejemplo, kind 1 = nota de texto corta). Los NIP documentan los kinds estándar para que distintas apps entiendan el mismo formato.",
+      "definitionEn": "Number indicating the event type (e.g. kind 1 = short text note). NIPs document standard kinds so different apps understand the same format."
+    },
+    {
+      "term": "NIP",
+      "category": "Nostr",
+      "definition": "Nostr Implementation Possibilities: especificación comunitaria que describe cómo usar kinds, tags y flujos para una función concreta (perfiles, imágenes, zaps, etc.).",
+      "definitionEn": "Nostr Implementation Possibilities: community specification describing how to use kinds, tags, and flows for a specific feature (profiles, images, zaps, etc.)."
+    },
+    {
+      "term": "Cliente Nostr",
+      "category": "Nostr",
+      "definition": "Aplicación (web o móvil) que se conecta a relays, crea y firma eventos y te muestra el feed. La misma identidad (npub) puede usarse en varios clientes.",
+      "definitionEn": "Web or mobile app that connects to relays, creates and signs events, and shows your feed. The same identity (npub) can be used across multiple clients."
+    },
+    {
+      "term": "Zap (Lightning en Nostr)",
+      "category": "Nostr",
+      "definition": "Propina o pago en Lightning Network vinculado a un perfil o nota, usando metadatos y eventos Nostr para la solicitud o el recibo (p. ej. NIP-57). Permite valorar contenido sin pasar por un intermediario tradicional.",
+      "definitionEn": "Lightning Network tip or payment linked to a profile or note, using Nostr metadata and events for the invoice or receipt (e.g. NIP-57). A way to support creators without a traditional middleman."
     },
     {
       "term": "Nodo de Negocio",

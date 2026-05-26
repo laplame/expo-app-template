@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { Text, Button, ButtonText, VStack } from '@gluestack-ui/themed';
+import { useBrandTheme } from '../theme/useBrandTheme';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
 
 export type WalletQrCameraPanelProps = {
@@ -14,6 +15,7 @@ export default function WalletQrCameraPanel({
   grantCameraLabel,
   cameraDeniedLabel,
 }: WalletQrCameraPanelProps) {
+  const { brand } = useBrandTheme();
   const [permission, requestPermission] = useCameraPermissions();
   const lastScanAt = useRef(0);
   const autoAsked = useRef(false);
@@ -41,7 +43,7 @@ export default function WalletQrCameraPanel({
   return (
     <VStack space="sm" width="100%" mb="$3">
       {!permission?.granted ? (
-        <Button size="sm" bg="#00704A" onPress={() => requestPermission()}>
+        <Button size="sm" bg={brand} onPress={() => requestPermission()}>
           <ButtonText>{grantCameraLabel}</ButtonText>
         </Button>
       ) : (

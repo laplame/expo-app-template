@@ -3,6 +3,7 @@ import { Modal, View, Pressable as RNPressable } from 'react-native';
 import { Box, Text, Button, ButtonText, HStack } from '@gluestack-ui/themed';
 import { useNavigation } from '@react-navigation/native';
 import { useSettings } from '../context/SettingsContext';
+import { useBrandTheme } from '../theme/useBrandTheme';
 import { getPromoSignupSeen, setPromoSignupSeen } from '../services/storage';
 import { WELCOME_BONUS_LUXAE, USD_TO_MXN } from '../context/WalletBalanceContext';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
@@ -10,6 +11,7 @@ import { TOKEN_SYMBOL } from '../constants/luxToken';
 export default function PromoSignupPopUp() {
   const navigation = useNavigation();
   const { language, currency } = useSettings();
+  const { brand } = useBrandTheme();
   const [visible, setVisible] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -67,18 +69,18 @@ export default function PromoSignupPopUp() {
       >
         <View style={{ width: '100%', maxWidth: 340 }}>
           <Box bg="$white" borderRadius="$2xl" p="$6" alignItems="center">
-            <Text fontSize="$2xl" fontWeight="$bold" color="#00704A" mb="$2">
+            <Text fontSize="$2xl" fontWeight="$bold" color={brand} mb="$2">
               {title}
             </Text>
             <Text fontSize="$md" color="$textLight700" textAlign="center" mb="$5">
               {message}
             </Text>
             <HStack space="md" justifyContent="center" flexWrap="wrap">
-              <Button size="md" bg="#00704A" onPress={goToSignUp}>
+              <Button size="md" bg={brand} onPress={goToSignUp}>
                 <ButtonText>{cta}</ButtonText>
               </Button>
-              <Button size="md" variant="outline" borderColor="#00704A" onPress={dismiss}>
-                <ButtonText color="#00704A">{close}</ButtonText>
+              <Button size="md" variant="outline" borderColor={brand} onPress={dismiss}>
+                <ButtonText color={brand}>{close}</ButtonText>
               </Button>
             </HStack>
           </Box>

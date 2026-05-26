@@ -16,11 +16,114 @@ export type NostrFeedQuery = {
 const IMAGE_IN_TEXT =
   /https?:\/\/[^\s<>"']+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s<>"']*)?/gi;
 const VIDEO_IN_TEXT =
-  /https?:\/\/[^\s<>"']+\.(?:mp4|webm)(?:\?[^\s<>"']*)?/gi;
+  /https?:\/\/[^\s<>"']+\.(?:mp4|webm|m3u8|mov|m4v|mkv)(?:\?[^\s<>"']*)?/gi;
+
+/** Markdown: ![alt](https://…) — la URL a menudo no lleva extensión en la ruta. */
+const MARKDOWN_IMAGE = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/gi;
+
+/** URLs sueltas en el texto (luego filtramos por extensión, query o host conocido). */
+const LOOSE_HTTP_URL = /https?:\/\/[^\s<>"')]+/gi;
+
+const KNOWN_IMG_HOST_SUFFIXES = [
+  'nostr.build',
+  'void.cat',
+  'imgur.com',
+  'twimg.com',
+  'unsplash.com',
+  'cloudinary.com',
+  'imagedelivery.net',
+  'primal.net',
+  'nostrimg.com',
+  'googleusercontent.com',
+  'githubusercontent.com',
+  'ibb.co',
+  'tenor.com',
+  'giphy.com',
+  'ipfs.io',
+  'dweb.link',
+  'ipfs.dweb.link',
+];
 
 function extractUrls(text: string, re: RegExp): string[] {
   const m = text.match(re);
   return m ? [...new Set(m)] : [];
+}
+
+function trimUrlTrailingPunct(url: string): string {
+  return url.replace(/[),.;:!?]+$/g, '');
+}
+
+function hostLooksLikeImageCdn(hostname: string): boolean {
+  const h = hostname.replace(/^www\./, '').toLowerCase();
+  if (h === 'images.unsplash.com' || h === 'picsum.photos') return true;
+  return KNOWN_IMG_HOST_SUFFIXES.some((s) => h === s || h.endsWith(`.${s}`));
+}
+
+/** True si la URL probablemente apunta a una imagen (no vídeo). */
+function looksLikeImageUrl(url: string): boolean {
+  const lower = url.toLowerCase().split('#')[0];
+  if (/\.(mp4|webm|mov|m4v|mkv)(\?|$|#|&)/i.test(lower)) return false;
+  if (/\.(jpe?g|png|gif|webp|avif|bmp)(\?|$|#|&)/i.test(lower)) return true;
+  if (/[?&]format=(jpe?g|png|gif|webp)/i.test(lower)) return true;
+  try {
+    const u = new URL(url);
+    const path = u.pathname.toLowerCase();
+    if (u.hostname === 'images.unsplash.com' && path.includes('/photo-')) return true;
+    if (u.hostname === 'picsum.photos') return true;
+    if (hostLooksLikeImageCdn(u.hostname)) return true;
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/** NIP-92: etiquetas ["imeta", "url https://…", "m image/jpeg", …]. */
+function extractImetaUrls(tags: string[][]): string[] {
+  const out: string[] = [];
+  for (const tag of tags) {
+    if (!tag?.length || tag[0] !== 'imeta') continue;
+    for (let i = 1; i < tag.length; i++) {
+      const part = tag[i];
+      if (typeof part !== 'string') continue;
+      if (part.toLowerCase().startsWith('url ')) {
+        const u = trimUrlTrailingPunct(part.slice(4).trim());
+        if (u.startsWith('http')) out.push(u);
+      }
+    }
+  }
+  return [...new Set(out)];
+}
+
+function extractMarkdownImages(text: string): string[] {
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  const re = new RegExp(MARKDOWN_IMAGE.source, 'gi');
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) out.push(trimUrlTrailingPunct(m[1].trim()));
+  }
+  return [...new Set(out)];
+}
+
+function extractLooseImageUrls(text: string): string[] {
+  const raw = text.match(LOOSE_HTTP_URL) ?? [];
+  const cleaned = raw.map((u) => trimUrlTrailingPunct(u));
+  return [...new Set(cleaned.filter(looksLikeImageUrl))];
+}
+
+function gatherImageUrlsFromEvent(ev: Event): string[] {
+  const raw = ev.content ?? '';
+  return [
+    ...new Set([
+      ...extractImetaUrls(ev.tags ?? []),
+      ...extractMarkdownImages(raw),
+      ...extractUrls(raw, IMAGE_IN_TEXT),
+      ...extractLooseImageUrls(raw),
+    ]),
+  ];
+}
+
+function stripMarkdownImages(text: string): string {
+  return text.replace(MARKDOWN_IMAGE, '').trim();
 }
 
 function stripMediaUrls(text: string): string {
@@ -29,6 +132,15 @@ function stripMediaUrls(text: string): string {
     .replace(VIDEO_IN_TEXT, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/** Quita del cuerpo las URLs que ya mostramos como <Image> (incl. sin extensión). */
+function stripListedImageUrls(text: string, imageUrls: string[]): string {
+  let t = text;
+  for (const u of [...imageUrls].sort((a, b) => b.length - a.length)) {
+    if (u && t.includes(u)) t = t.split(u).join('');
+  }
+  return t.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**
@@ -41,7 +153,30 @@ const HIDDEN_JSON_NOTE_TYPES = new Set([
   'heartbeat',
   'device_metrics',
   'service_status',
+  'swarm_identity_record',
+  /** Puerta de enlace / NVR u otros clientes que publican solicitudes firmadas como texto. */
+  'gateway_grant_request',
 ]);
+
+function jsonLooksLikeMachineNote(j: Record<string, unknown>): boolean {
+  if (typeof j.type === 'string' && HIDDEN_JSON_NOTE_TYPES.has(j.type)) return true;
+  if (j.kind === 30078) return true;
+  if (typeof j.type === 'string') {
+    const t = j.type.toLowerCase();
+    if (t.startsWith('swarm_') || t.endsWith('_identity_record')) return true;
+    if (t.startsWith('gateway_') && (t.endsWith('_request') || t.endsWith('_response'))) return true;
+  }
+  /** Patrón gateway/NVR: `gw-grant-…` + service + action (no son posts sociales). */
+  if (
+    typeof j.requestId === 'string' &&
+    /^gw-grant-/i.test(j.requestId) &&
+    typeof j.service === 'string' &&
+    typeof j.action === 'string'
+  ) {
+    return true;
+  }
+  return false;
+}
 
 function isNonDisplayableKind1Content(content: string): boolean {
   const t = content.trim();
@@ -53,7 +188,7 @@ function isNonDisplayableKind1Content(content: string): boolean {
     return false;
   }
   if (!j || typeof j !== 'object') return false;
-  if (typeof j.type === 'string' && HIDDEN_JSON_NOTE_TYPES.has(j.type)) return true;
+  if (jsonLooksLikeMachineNote(j)) return true;
   if (
     typeof j.zone === 'string' &&
     typeof j.devicePk === 'string' &&
@@ -68,6 +203,18 @@ function isNonDisplayableKind1Content(content: string): boolean {
     typeof j.releaseChannel === 'string'
   ) {
     return true;
+  }
+  /** JSON embebido en `content` (p. ej. replaceable con string escapado). */
+  if (typeof j.content === 'string') {
+    const innerRaw = j.content.trim();
+    if (innerRaw.startsWith('{') && innerRaw.endsWith('}')) {
+      try {
+        const inner = JSON.parse(innerRaw) as Record<string, unknown>;
+        if (inner && typeof inner === 'object' && jsonLooksLikeMachineNote(inner)) return true;
+      } catch {
+        /* ignore */
+      }
+    }
   }
   return false;
 }
@@ -95,13 +242,16 @@ export function mapNoteWithProfiles(
   stats?: { likes: number; reposts: number }
 ): NostrFeedItem {
   const p = profiles.get(ev.pubkey) ?? {};
-  const images = extractUrls(ev.content, IMAGE_IN_TEXT);
+  const images = gatherImageUrlsFromEvent(ev);
   const videos = extractUrls(ev.content, VIDEO_IN_TEXT);
+  let body = stripMarkdownImages(ev.content);
+  body = stripMediaUrls(body);
+  body = stripListedImageUrls(body, images);
   return {
     id: ev.id,
     pubkey: ev.pubkey,
     createdAt: ev.created_at,
-    content: stripMediaUrls(ev.content) || ev.content.trim(),
+    content: body || ev.content.trim(),
     kind: ev.kind,
     imageUrls: images,
     videoUrl: videos[0],
@@ -210,13 +360,19 @@ export async function fetchReactionCounts(
   return counts;
 }
 
+export function filterDisplayableNostrFeedItems(items: NostrFeedItem[]): NostrFeedItem[] {
+  return items.filter((it) => it.kind !== 1 || !isNonDisplayableKind1Content(it.content));
+}
+
 export function mergeFeedWithSeed(
   seed: NostrFeedItem[],
   relay: NostrFeedItem[]
 ): NostrFeedItem[] {
+  const seedF = filterDisplayableNostrFeedItems(seed);
+  const relayF = filterDisplayableNostrFeedItems(relay);
   const seen = new Set<string>();
   const merged: NostrFeedItem[] = [];
-  for (const row of [...seed, ...relay]) {
+  for (const row of [...seedF, ...relayF]) {
     if (seen.has(row.id)) continue;
     seen.add(row.id);
     merged.push(row);

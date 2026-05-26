@@ -12,6 +12,7 @@ import {
   FormControlLabel,
   FormControlLabelText,
 } from '@gluestack-ui/themed';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 let DateTimePicker: React.ComponentType<any> | null = null;
 try {
@@ -57,6 +58,7 @@ export default function FormComponent({
   onSubmit,
   initialValues = {},
 }: FormComponentProps) {
+  const { brand } = useBrandTheme();
   const [formData, setFormData] = useState<Record<string, string>>(initialValues);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -243,8 +245,8 @@ export default function FormComponent({
             )}
           </FormControl>
         ))}
-        <Button onPress={handleSubmit} mt="$4">
-          <ButtonText>{submitLabel}</ButtonText>
+        <Button onPress={handleSubmit} mt="$4" bg={brand}>
+          <ButtonText color="$white">{submitLabel}</ButtonText>
         </Button>
       </VStack>
     </Box>

@@ -21,6 +21,7 @@ import {
 import QRCode from 'react-native-qrcode-svg';
 import { useNavigation } from '@react-navigation/native';
 import { useSettings } from '../context/SettingsContext';
+import { useBrandTheme } from '../theme/useBrandTheme';
 import { TOKEN_SYMBOL } from '../constants/luxToken';
 import { getUserId, getWalletAddresses } from '../services/storage';
 import { getOrCreateDeviceId } from '../services/deviceIdentity';
@@ -53,6 +54,8 @@ function modalTranslations(language: 'en' | 'es') {
       cameraDenied: 'No hay permiso de cámara. Actívalo en Configuración del sistema.',
       addressMaskedHint:
         'Completa verificación KYC o KYB para ver la dirección completa. El QR sigue siendo válido.',
+      largeAmountUsdLxeWalletHint:
+        'Para montos mayores a 20 USD (USDLXE), usa la pantalla Billetera.',
     };
   }
   return {
@@ -77,6 +80,8 @@ function modalTranslations(language: 'en' | 'es') {
     cameraDenied: 'Camera permission denied. Enable it in system Settings.',
     addressMaskedHint:
       'Complete KYC or KYB to see your full address. The QR code still encodes the correct address.',
+    largeAmountUsdLxeWalletHint:
+      'For amounts over 20 USD (USDLXE), use the Wallet screen.',
   };
 }
 
@@ -87,7 +92,7 @@ export interface AddressPayReceiveModalProps {
   addressOverride?: string | null;
   /** Etiqueta opcional (ej. "Ethereum"). */
   chainLabel?: string;
-  /** Al abrir el modal, pestaña inicial. */
+  /** Al abrir el modal: `pay` = Pagar (QR), `receive` = Cobrar (cámara). */
   initialIntent?: 'pay' | 'receive';
 }
 
@@ -96,10 +101,11 @@ export default function AddressPayReceiveModal({
   onClose,
   addressOverride,
   chainLabel,
-  initialIntent = 'receive',
+  initialIntent = 'pay',
 }: AddressPayReceiveModalProps) {
   const navigation = useNavigation();
   const settings = useSettings();
+  const { brand } = useBrandTheme();
   const { revealWalletAddresses, refreshVerificationAccess } = useVerificationAccess();
   const language = settings.language === 'es' ? 'es' : 'en';
   const paymentLimitLuxae = settings.paymentLimitLuxae ?? 20;
@@ -107,7 +113,7 @@ export default function AddressPayReceiveModal({
   const lang = language;
   const t = useMemo(() => modalTranslations(lang), [lang]);
 
-  const [userQrIntent, setUserQrIntent] = useState<'pay' | 'receive'>('receive');
+  const [userQrIntent, setUserQrIntent] = useState<'pay' | 'receive'>('pay');
   const [payAmountInput, setPayAmountInput] = useState('');
   const [resolvedAddress, setResolvedAddress] = useState<string | null>(null);
   const [userIdForQr, setUserIdForQr] = useState('');
@@ -219,11 +225,11 @@ export default function AddressPayReceiveModal({
             removeClippedSubviews={Platform.OS === 'android' ? false : undefined}
           >
             <Box bg="$white" borderRadius="$2xl" p="$5" alignItems="center" width="100%">
-              <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$1">
+              <Text fontSize="$lg" fontWeight="$bold" color={brand} mb="$1">
                 {t.title}
               </Text>
               {chainLabel ? (
-                <Text fontSize="$xs" color="#00704A" fontWeight="$semibold" mb="$1">
+                <Text fontSize="$xs" color={brand} fontWeight="$semibold" mb="$1">
                   {chainLabel}
                 </Text>
               ) : null}
@@ -249,29 +255,42 @@ export default function AddressPayReceiveModal({
               <Text fontSize="$xs" color="$textLight500" mb="$3" textAlign="center">
                 {t.qrIntentHint}
               </Text>
+              <Box
+                bg="$backgroundLight50"
+                borderRadius="$md"
+                p="$3"
+                mb="$3"
+                width="100%"
+                borderLeftWidth={4}
+                borderLeftColor={brand}
+              >
+                <Text fontSize="$xs" color="$textLight700" textAlign="center">
+                  {t.largeAmountUsdLxeWalletHint}
+                </Text>
+              </Box>
               <HStack space="sm" width="100%" mb="$3">
                 <Button
                   flex={1}
                   size="sm"
                   variant={userQrIntent === 'pay' ? 'solid' : 'outline'}
-                  bg={userQrIntent === 'pay' ? '#00704A' : 'transparent'}
-                  borderColor="#00704A"
+                  bg={userQrIntent === 'pay' ? brand : 'transparent'}
+                  borderColor={brand}
                   onPress={() => setUserQrIntent('pay')}
                 >
-                  <ButtonText color={userQrIntent === 'pay' ? '$white' : '#00704A'}>{t.qrPay}</ButtonText>
+                  <ButtonText color={userQrIntent === 'pay' ? '$white' : {brand}}>{t.qrPay}</ButtonText>
                 </Button>
                 <Button
                   flex={1}
                   size="sm"
                   variant={userQrIntent === 'receive' ? 'solid' : 'outline'}
-                  bg={userQrIntent === 'receive' ? '#00704A' : 'transparent'}
-                  borderColor="#00704A"
+                  bg={userQrIntent === 'receive' ? brand : 'transparent'}
+                  borderColor={brand}
                   onPress={() => {
                     setUserQrIntent('receive');
                     setPayAmountInput('');
                   }}
                 >
-                  <ButtonText color={userQrIntent === 'receive' ? '$white' : '#00704A'}>{t.qrReceive}</ButtonText>
+                  <ButtonText color={userQrIntent === 'receive' ? '$white' : {brand}}>{t.qrReceive}</ButtonText>
                 </Button>
               </HStack>
 
@@ -301,17 +320,17 @@ export default function AddressPayReceiveModal({
                     {t.payExceeded}
                   </Text>
                   <VStack space="sm" width="100%">
-                    <Button size="md" bg="#00704A" width="100%" onPress={() => nav('Wallet')}>
+                    <Button size="md" bg={brand} width="100%" onPress={() => nav('Wallet')}>
                       <ButtonText>{t.goToWallet}</ButtonText>
                     </Button>
                     <Button
                       size="sm"
                       variant="outline"
-                      borderColor="#00704A"
+                      borderColor={brand}
                       width="100%"
                       onPress={() => nav('Settings')}
                     >
-                      <ButtonText color="#00704A">{t.goToSettingsLimit}</ButtonText>
+                      <ButtonText color={brand}>{t.goToSettingsLimit}</ButtonText>
                     </Button>
                   </VStack>
                 </VStack>
@@ -321,7 +340,7 @@ export default function AddressPayReceiveModal({
                 </Text>
               ) : userQrIntent === 'pay' && userQRValue ? (
                 <Box bg="$white" p="$4" borderRadius="$lg" borderWidth={1} borderColor="$borderLight200" mb="$3">
-                  <QRCode value={userQRValue} size={200} color="#00704A" backgroundColor="white" />
+                  <QRCode value={userQRValue} size={200} color={brand} backgroundColor="white" />
                 </Box>
               ) : userQrIntent === 'receive' ? (
                 <VStack space="sm" width="100%" mb="$3">
@@ -344,15 +363,15 @@ export default function AddressPayReceiveModal({
                   mt="$2"
                   size="sm"
                   variant="outline"
-                  borderColor="#00704A"
+                  borderColor={brand}
                   width="100%"
                   onPress={() => nav('Wallet')}
                 >
-                  <ButtonText color="#00704A">{t.goToWallet}</ButtonText>
+                  <ButtonText color={brand}>{t.goToWallet}</ButtonText>
                 </Button>
               ) : null}
 
-              <Button mt="$4" size="md" bg="#00704A" width="100%" onPress={onClose}>
+              <Button mt="$4" size="md" bg={brand} width="100%" onPress={onClose}>
                 <ButtonText>{t.close}</ButtonText>
               </Button>
             </Box>

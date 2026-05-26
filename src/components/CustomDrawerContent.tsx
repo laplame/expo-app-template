@@ -4,6 +4,8 @@ import { DrawerContentScrollView, DrawerContentComponentProps } from '@react-nav
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useSettings } from '../context/SettingsContext';
 import { appVersion, appBuild, appTimestamp } from '../version';
+import AppMenuBackground from './AppMenuBackground';
+import { getAppTheme } from '../theme/appThemes';
 
 interface DrawerItem {
   id: string;
@@ -24,12 +26,20 @@ const drawerItems: DrawerItem[] = [
   { id: '6', titleEn: 'NYC (Know Your Client)', titleEs: 'NYC (Conoce a tu cliente)', screen: 'NYC', icon: '👤' },
   { id: '7', titleEn: 'Upload promotion', titleEs: 'Subir promoción', screen: 'UploadPromotions', icon: '📤' },
   { id: '8', titleEn: 'Influencers & Vote', titleEs: 'Influencers y votar', screen: 'InfluencersList', icon: '⭐' },
-  { id: '8p2p', titleEn: 'Network P2P (Nostr)', titleEs: 'Red P2P (Nostr)', screen: 'NetworkP2P', icon: '📡' },
+  {
+    id: '8b',
+    titleEn: 'Monetization',
+    titleEs: 'Monetización',
+    screen: 'Monetization',
+    icon: '💰',
+  },
+  { id: '8p2p', titleEn: 'Social Layer', titleEs: 'Social Layer', screen: 'NetworkP2P', icon: '📡' },
   { id: '9', titleEn: 'Settings', titleEs: 'Configuración', screen: 'Settings', icon: '⚙️' },
 ];
 
 export default function CustomDrawerContent(props: DrawerContentComponentProps) {
-  const { language } = useSettings();
+  const { language, appTheme } = useSettings();
+  const themeDef = getAppTheme(appTheme);
   const appName = language === 'es' ? 'damecodigo' : 'link4deal';
   const menuTitle = language === 'es' ? 'Menú' : 'Menu';
 
@@ -50,9 +60,8 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
   const activeRoute = (props.state?.routes[props.state?.index || 0]?.state as any)?.routes?.[(props.state?.routes[props.state?.index || 0]?.state as any)?.index || 0]?.name || 'Home';
 
   return (
-    <Box flex={1} bg="$white">
-      {/* Green Header */}
-      <Box bg="#00704A" pt="$12" pb="$4" px="$4">
+    <Box flex={1}>
+      <Box bg={themeDef.brand} pt="$12" pb="$4" px="$4">
         <VStack space="xs">
           <Text fontSize="$3xl" fontWeight="$bold" color="$white">
             {appName.toUpperCase()}
@@ -63,54 +72,65 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
         </VStack>
       </Box>
 
-      <DrawerContentScrollView {...props} contentContainerStyle={{ paddingTop: 0, flexGrow: 1 }}>
-        <VStack space="sm" px="$4" py="$2" flex={1}>
-          {drawerItems.map((item) => {
-            const isActive = activeRoute === item.screen;
-            return (
-              <Pressable
-                key={item.id}
-                onPress={() => handleNavigation(item.screen, item.params)}
-                _pressed={{ bg: 'rgba(0, 112, 74, 0.1)' }}
-                borderRadius="$md"
-                bg={isActive ? 'rgba(0, 112, 74, 0.1)' : 'transparent'}
-              >
-                <HStack
-                  space="md"
-                  alignItems="center"
-                  px="$4"
-                  py="$3"
+      <AppMenuBackground overlayOpacity={0.82}>
+        <DrawerContentScrollView
+          {...props}
+          style={{ backgroundColor: 'transparent' }}
+          contentContainerStyle={{ paddingTop: 0, flexGrow: 1 }}
+        >
+          <VStack space="sm" px="$4" py="$2" flex={1}>
+            {drawerItems.map((item) => {
+              const isActive = activeRoute === item.screen;
+              return (
+                <Pressable
+                  key={item.id}
+                  onPress={() => handleNavigation(item.screen, item.params)}
+                  $pressed={{ bg: 'rgba(0, 112, 74, 0.12)' }}
                   borderRadius="$md"
+                  borderWidth={isActive ? 2 : 0}
+                  borderColor={themeDef.brand}
+                  bg={isActive ? 'rgba(255,255,255,0.82)' : 'rgba(255,255,255,0.55)'}
                 >
-                  {item.icon && (
-                    <Text fontSize="$xl">{item.icon}</Text>
-                  )}
-                  <Text 
-                    fontSize="$md" 
-                    color={isActive ? '#00704A' : '$textLight900'} 
-                    fontWeight={isActive ? '$bold' : '$medium'}
+                  <HStack
+                    space="md"
+                    alignItems="center"
+                    px="$4"
+                    py="$3"
+                    borderRadius="$md"
                   >
-                    {language === 'es' ? item.titleEs : item.titleEn}
-                  </Text>
-                </HStack>
-              </Pressable>
-            );
-          })}
-        </VStack>
-      </DrawerContentScrollView>
+                    {item.icon ? <Text fontSize="$xl">{item.icon}</Text> : null}
+                    <Text
+                      fontSize="$md"
+                      color={isActive ? themeDef.brand : '$textLight900'}
+                      fontWeight={isActive ? '$bold' : '$medium'}
+                    >
+                      {language === 'es' ? item.titleEs : item.titleEn}
+                    </Text>
+                  </HStack>
+                </Pressable>
+              );
+            })}
+          </VStack>
+        </DrawerContentScrollView>
 
-      {/* Version fixed at bottom of drawer */}
-      <Box px="$4" py="$3" borderTopWidth={1} borderTopColor="$borderLight200" bg="$white">
-        <Text fontSize="$xs" color="$textLight500">
-          v{appVersion} ({language === 'es' ? 'build' : 'build'} {appBuild})
-        </Text>
-        <Text fontSize="$xs" color="$textLight400" mt="$1">
-          {new Date(appTimestamp).toLocaleString(language === 'es' ? 'es' : 'en-US', {
-            dateStyle: 'short',
-            timeStyle: 'short',
-          })}
-        </Text>
-      </Box>
+        <Box
+          px="$4"
+          py="$3"
+          borderTopWidth={1}
+          borderTopColor="rgba(0,0,0,0.08)"
+          bg="rgba(255,255,255,0.92)"
+        >
+          <Text fontSize="$xs" color="$textLight500">
+            v{appVersion} ({language === 'es' ? 'build' : 'build'} {appBuild})
+          </Text>
+          <Text fontSize="$xs" color="$textLight400" mt="$1">
+            {new Date(appTimestamp).toLocaleString(language === 'es' ? 'es' : 'en-US', {
+              dateStyle: 'short',
+              timeStyle: 'short',
+            })}
+          </Text>
+        </Box>
+      </AppMenuBackground>
     </Box>
   );
 }

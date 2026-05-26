@@ -61,6 +61,13 @@ export type InfluencerSocialMedia =
 export interface InfluencerDoc {
   _id?: string;
   id?: string;
+  /** Slug en la URL web: /influencer/{publicSlug} — ej. luccylamademoiselita */
+  publicSlug?: string;
+  /** Handle del API (suele coincidir con publicSlug) */
+  username?: string;
+  /** Código corto de cupón/campaña (ej. DNF9YTP2), NO es el slug de la página */
+  profileShortCode?: string;
+  influencerProfileShortCode?: string;
   displayName?: string;
   name?: string;
   bio?: string;
@@ -74,7 +81,34 @@ export interface InfluencerDoc {
   totalFollowers?: number;
   /** Seguidores por plataforma */
   followers?: InfluencerFollowers;
+  recentPromotions?: InfluencerRecentPromotion[];
+  recentPayments?: unknown[];
+  couponStats?: InfluencerCouponStats;
+  redeemedCoupons?: number;
+  activePromotions?: number;
+  completedPromotions?: number;
   [key: string]: unknown;
+}
+
+export interface InfluencerRecentPromotion {
+  id?: string;
+  _id?: string;
+  title?: string;
+  brand?: string;
+  date?: string;
+  status?: string;
+  earnings?: number;
+  couponUsage?: number;
+  totalSales?: number;
+  couponCode?: string;
+}
+
+export interface InfluencerCouponStats {
+  totalCoupons?: number;
+  activeCoupons?: number;
+  totalSales?: number;
+  totalCommission?: number;
+  averageConversion?: number;
 }
 
 export interface CreateInfluencerPayload {
@@ -204,6 +238,46 @@ export async function analyzeProfileImage(
   }
 }
 
+/** Perfil del influencer vinculado al usuario (GET /api/influencers/me). Requiere JWT. */
+export async function getInfluencerMe(accessToken: string): Promise<{
+  ok: boolean;
+  data?: InfluencerDoc;
+  error?: string;
+  code?: string;
+}> {
+  try {
+    const res = await fetch(`${INFLUENCERS_API}/me`, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${accessToken.trim()}`,
+      },
+    });
+    const json = await res.json().catch(() => ({}));
+    const message =
+      (json as { message?: string }).message ??
+      (json as { error?: string }).error;
+    const code = typeof (json as { code?: string }).code === 'string'
+      ? (json as { code: string }).code
+      : undefined;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: formatHttpApiError(res.status, message ?? `HTTP ${res.status}`),
+        code,
+      };
+    }
+    const raw = (json as { data?: InfluencerDoc }).data ?? json;
+    if (!raw || typeof raw !== 'object') {
+      return { ok: false, error: message ?? 'Sin datos de perfil' };
+    }
+    return { ok: true, data: normalizeInfluencerDoc(raw as InfluencerDoc) };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg || 'Network error' };
+  }
+}
+
 /** Obtiene todos los influencers (GET /api/influencers). */
 export async function getAllInfluencers(params?: {
   limit?: number;
@@ -235,7 +309,7 @@ export async function getAllInfluencers(params?: {
     const data = (json as any).data;
     const list = Array.isArray(data) ? data : (data?.docs ?? (json as any).influencers ?? []);
     const arr = Array.isArray(list) ? list : [];
-    const deduped = deduplicateInfluencers(arr as InfluencerDoc[]);
+    const deduped = deduplicateInfluencers(arr as InfluencerDoc[]).map(normalizeInfluencerDoc);
     const totalDocs = data?.totalDocs ?? (json as any).totalDocs ?? deduped.length;
     return { ok: true, influencers: deduped, totalDocs };
   } catch (e: any) {
@@ -307,11 +381,29 @@ export async function searchInfluencers(params: {
       ? data
       : (data?.docs ?? (json as any).influencers ?? []);
     const arr = Array.isArray(list) ? list : [];
-    const deduped = deduplicateInfluencers(arr as InfluencerDoc[]);
+    const deduped = deduplicateInfluencers(arr as InfluencerDoc[]).map(normalizeInfluencerDoc);
     return { ok: true, influencers: deduped };
   } catch (e: any) {
     return { ok: false, error: e?.message ?? 'Network error' };
   }
+}
+
+/** Normaliza documento del listado GET /api/influencers (name, username, publicSlug). */
+export function normalizeInfluencerDoc(raw: InfluencerDoc): InfluencerDoc {
+  const doc = { ...raw };
+  if (!doc._id && doc.id) doc._id = doc.id;
+  if (!doc.id && doc._id) doc.id = doc._id;
+  if (!doc.displayName && typeof doc.name === 'string') {
+    doc.displayName = doc.name;
+  }
+  const record = doc as Record<string, unknown>;
+  if (!doc.publicSlug && typeof record.public_slug === 'string') {
+    doc.publicSlug = record.public_slug;
+  }
+  if (!doc.username && typeof record.userName === 'string') {
+    doc.username = record.userName;
+  }
+  return doc;
 }
 
 /** Interpreta cuerpos variados de POST /influencers (data, influencer o documento en raíz). */
@@ -321,11 +413,7 @@ export function parseInfluencerCreateBody(json: unknown): InfluencerDoc | undefi
   let raw: unknown = j.data ?? j.influencer;
   if (raw == null && (j._id != null || j.id != null)) raw = j;
   if (!raw || typeof raw !== 'object') return undefined;
-  const doc = { ...(raw as InfluencerDoc) };
-  if (!doc.displayName && typeof (doc as { name?: string }).name === 'string') {
-    (doc as InfluencerDoc).displayName = (doc as { name: string }).name;
-  }
-  return doc;
+  return normalizeInfluencerDoc(raw as InfluencerDoc);
 }
 
 function isLikelyDuplicateInfluencerError(message: string, status: number): boolean {
@@ -341,7 +429,8 @@ function isLikelyDuplicateInfluencerError(message: string, status: number): bool
  * con ese contrato; además se aceptan variantes (documento en raíz, `influencer`, etc.).
  */
 export async function createInfluencer(
-  payload: CreateInfluencerPayload
+  payload: CreateInfluencerPayload,
+  options?: { authToken?: string }
 ): Promise<{ ok: boolean; data?: InfluencerDoc; error?: string; duplicate?: boolean }> {
   try {
     const body = {
@@ -357,12 +446,16 @@ export async function createInfluencer(
       })),
       avatar: payload.avatar || undefined,
     };
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    };
+    if (options?.authToken?.trim()) {
+      headers.Authorization = `Bearer ${options.authToken.trim()}`;
+    }
     const res = await fetch(INFLUENCERS_API, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
+      headers,
       body: JSON.stringify(body),
     });
     const json = await res.json().catch(() => ({}));
@@ -398,7 +491,7 @@ export async function createInfluencer(
       };
     }
     if (data) {
-      return { ok: true, data };
+      return { ok: true, data: normalizeInfluencerDoc(data) };
     }
     // Versión previa exigía success === true; aquí success true sin cuerpo parseable
     if (successFlag === true) {

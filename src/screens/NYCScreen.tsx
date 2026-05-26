@@ -8,6 +8,8 @@ import {
   VStack,
   Button,
   ButtonText,
+  Input,
+  InputField,
 } from '@gluestack-ui/themed';
 import { StatusBar } from 'expo-status-bar';
 import FormComponent, { FormField } from '../components/FormComponent';
@@ -16,6 +18,10 @@ import { useVerificationAccess } from '../context/VerificationAccessContext';
 import { useWalletBalance } from '../context/WalletBalanceContext';
 import { getKycForm, setKycForm, setUserId } from '../services/storage';
 import { getOrCreateDeviceId } from '../services/deviceIdentity';
+import { requestKycWhatsappCode, verifyKycWhatsappCode } from '../services/kycWhatsappApi';
+import { useBrandTheme } from '../theme/useBrandTheme';
+
+const WHATSAPP_KYC_REQUIRED = process.env.EXPO_PUBLIC_KYC_WHATSAPP_REQUIRED === 'true';
 
 // Biometrics only on native; avoid import error on web
 let LocalAuthentication: typeof import('expo-local-authentication') | null = null;
@@ -42,12 +48,19 @@ const getDeviceLanguage = (): 'en' | 'es' => {
 export default function NYCScreen() {
   const navigation = useNavigation();
   const { language, setUserName } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
   const { refreshVerificationAccess } = useVerificationAccess();
   const { grantWelcomeBonus, grantThreeFieldsBonus } = useWalletBalance();
   const [verificationStatus, setVerificationStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [biometricError, setBiometricError] = useState<string | null>(null);
   const [hasBiometric, setHasBiometric] = useState<boolean | null>(null);
   const [savedForm, setSavedForm] = useState<Record<string, string> | null>(null);
+  const [pendingKycData, setPendingKycData] = useState<Record<string, string> | null>(null);
+  const [whatsappCode, setWhatsappCode] = useState('');
+  const [whatsappVerificationId, setWhatsappVerificationId] = useState<string | undefined>();
+  const [whatsappVerifiedPhone, setWhatsappVerifiedPhone] = useState<string | null>(null);
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+  const [whatsappError, setWhatsappError] = useState<string | null>(null);
 
   useEffect(() => {
     getKycForm().then((data) => setSavedForm(data));
@@ -92,6 +105,34 @@ export default function NYCScreen() {
         ? 'Verificación biométrica fallida o cancelada.'
         : 'Biometric verification failed or was cancelled.',
     tryAgain: language === 'es' ? 'Reintentar' : 'Try again',
+    whatsappTitle: language === 'es' ? 'Verificación de WhatsApp' : 'WhatsApp verification',
+    whatsappPending:
+      language === 'es'
+        ? 'Te enviamos un código por WhatsApp. Escríbelo aquí para confirmar que el número es real antes de completar el KYC.'
+        : 'We sent you a code via WhatsApp. Enter it here to confirm the number is real before completing KYC.',
+    whatsappCodeLabel: language === 'es' ? 'Código recibido por WhatsApp' : 'Code received via WhatsApp',
+    whatsappVerify: language === 'es' ? 'Validar WhatsApp' : 'Verify WhatsApp',
+    whatsappResend: language === 'es' ? 'Reenviar código' : 'Resend code',
+    whatsappSending: language === 'es' ? 'Enviando código...' : 'Sending code...',
+    whatsappVerifying: language === 'es' ? 'Validando...' : 'Verifying...',
+    whatsappRequired:
+      language === 'es'
+        ? 'Primero valida el código enviado por WhatsApp.'
+        : 'First verify the code sent via WhatsApp.',
+    whatsappCodeRequired:
+      language === 'es' ? 'Ingresa el código de WhatsApp.' : 'Enter the WhatsApp code.',
+    whatsappSendFailed:
+      language === 'es'
+        ? 'No se pudo enviar el código de WhatsApp.'
+        : 'Could not send the WhatsApp code.',
+    whatsappVerifyFailed:
+      language === 'es'
+        ? 'Código inválido o expirado.'
+        : 'Invalid or expired code.',
+    whatsappRelaxedNotice:
+      language === 'es'
+        ? 'WhatsApp queda pendiente por ahora porque todavía no hay proveedor OTP configurado.'
+        : 'WhatsApp remains pending for now because no OTP provider is configured yet.',
 
     // Form labels
     fullName: language === 'es' ? 'Nombre completo' : 'Full name',
@@ -133,13 +174,44 @@ export default function NYCScreen() {
     }
   };
 
-  const handleSubmitWithBiometric = async (data: Record<string, string>) => {
+  const requestWhatsappVerification = async (data: Record<string, string>) => {
+    const phone = data.phone?.trim();
+    if (!phone) return;
+    setPendingKycData(data);
+    setWhatsappLoading(true);
+    setWhatsappError(null);
+    setWhatsappCode('');
+    try {
+      const result = await requestKycWhatsappCode(phone);
+      if (!result.ok) {
+        setWhatsappError(result.error ?? t.whatsappSendFailed);
+        return;
+      }
+      setWhatsappVerificationId(result.verificationId);
+    } finally {
+      setWhatsappLoading(false);
+    }
+  };
+
+  const completeKycWithBiometric = async (
+    data: Record<string, string>,
+    whatsappMeta?: { verified?: boolean; verifiedAt?: string; verificationId?: string; status?: string }
+  ) => {
     setBiometricError(null);
     setVerificationStatus('idle');
+    const whatsappVerified = whatsappMeta?.verified === true;
 
+    const dataToSave = {
+      ...data,
+      phoneWhatsappVerified: whatsappVerified ? 'true' : 'false',
+      phoneWhatsappVerificationStatus:
+        whatsappMeta?.status ?? (WHATSAPP_KYC_REQUIRED ? 'pending' : 'not_required_until_provider_configured'),
+      ...(whatsappVerified ? { phoneWhatsappVerifiedAt: whatsappMeta?.verifiedAt ?? new Date().toISOString() } : {}),
+      ...(whatsappMeta?.verificationId ? { phoneWhatsappVerificationId: whatsappMeta.verificationId } : {}),
+    };
     const name = data.fullName?.trim() || null;
     if (name) setUserName(name);
-    await setKycForm(data);
+    await setKycForm(dataToSave);
     getOrCreateDeviceId().then((deviceId) => setUserId(deviceId)).catch(() => {});
 
     const hasThreeFields = Boolean(data.fullName?.trim() && data.dateOfBirth?.trim() && data.phone?.trim());
@@ -189,6 +261,53 @@ export default function NYCScreen() {
     }
   };
 
+  const handleSubmitWithBiometric = async (data: Record<string, string>) => {
+    const phone = data.phone?.trim();
+    if (!phone) return;
+    if (WHATSAPP_KYC_REQUIRED && whatsappVerifiedPhone !== phone) {
+      await requestWhatsappVerification(data);
+      return;
+    }
+    await completeKycWithBiometric(data, WHATSAPP_KYC_REQUIRED
+      ? { verified: true, status: 'verified_local_session' }
+      : { verified: false, status: 'not_required_until_provider_configured' });
+  };
+
+  const handleVerifyWhatsappCode = async () => {
+    const data = pendingKycData;
+    const code = whatsappCode.trim();
+    if (!data) return;
+    if (!code) {
+      setWhatsappError(t.whatsappCodeRequired);
+      return;
+    }
+    setWhatsappLoading(true);
+    setWhatsappError(null);
+    try {
+      const phone = data.phone.trim();
+      const result = await verifyKycWhatsappCode({
+        phone,
+        code,
+        verificationId: whatsappVerificationId,
+      });
+      if (!result.ok || result.verified === false) {
+        setWhatsappError(result.error ?? t.whatsappVerifyFailed);
+        return;
+      }
+      setWhatsappVerifiedPhone(phone);
+      setPendingKycData(null);
+      setWhatsappCode('');
+      await completeKycWithBiometric(data, {
+        verified: true,
+        status: 'verified',
+        verifiedAt: result.verifiedAt,
+        verificationId: whatsappVerificationId,
+      });
+    } finally {
+      setWhatsappLoading(false);
+    }
+  };
+
   return (
     <Box flex={1} bg="$white">
       <StatusBar style="dark" />
@@ -204,7 +323,7 @@ export default function NYCScreen() {
       >
         <VStack space="lg" width="100%" minHeight={400}>
           {/* Header */}
-          <Box bg="#00704A" borderRadius="$xl" p="$5">
+          <Box bg={brand} borderRadius="$xl" p="$5">
             <Text fontSize="$2xl" fontWeight="$bold" color="$white">
               NYC
             </Text>
@@ -215,7 +334,7 @@ export default function NYCScreen() {
 
           {/* What is KYC - Explicación */}
           <Box width="100%">
-            <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$2">
+            <Text fontSize="$lg" fontWeight="$bold" color={brand} mb="$2">
               {t.whatIsKyc}
             </Text>
             <Text fontSize="$sm" color="$textLight700" lineHeight={22}>
@@ -225,7 +344,7 @@ export default function NYCScreen() {
 
           {/* Why KYC */}
           <Box width="100%">
-            <Text fontSize="$lg" fontWeight="$bold" color="#00704A" mb="$2">
+            <Text fontSize="$lg" fontWeight="$bold" color={brand} mb="$2">
               {t.whyKyc}
             </Text>
             <Text fontSize="$sm" color="$textLight700" lineHeight={22}>
@@ -254,7 +373,7 @@ export default function NYCScreen() {
                   ? '#22c55e'
                   : verificationStatus === 'error'
                   ? '#ef4444'
-                  : '#00704A'
+                  : brand
               }
             >
               <Text fontSize="$md" color="$textLight900" fontWeight="$medium">
@@ -294,7 +413,51 @@ export default function NYCScreen() {
               onSubmit={handleSubmitWithBiometric}
               initialValues={savedForm ?? {}}
             />
+            {!WHATSAPP_KYC_REQUIRED && (
+              <Text fontSize="$xs" color="$textLight500" mt="$3">
+                {t.whatsappRelaxedNotice}
+              </Text>
+            )}
           </Box>
+
+          {WHATSAPP_KYC_REQUIRED && pendingKycData && (
+            <Box width="100%" bg="$backgroundLight50" borderRadius="$lg" p="$4" borderWidth={1} borderColor={brand}>
+              <VStack space="md">
+                <Text fontSize="$lg" fontWeight="$bold" color={brand}>
+                  {t.whatsappTitle}
+                </Text>
+                <Text fontSize="$sm" color="$textLight700" lineHeight={20}>
+                  {t.whatsappPending}
+                </Text>
+                <Text fontSize="$sm" color="$textLight900" fontWeight="$medium">
+                  {pendingKycData.phone}
+                </Text>
+                <Input>
+                  <InputField
+                    value={whatsappCode}
+                    onChangeText={setWhatsappCode}
+                    placeholder={t.whatsappCodeLabel}
+                    keyboardType="number-pad"
+                  />
+                </Input>
+                {whatsappError ? (
+                  <Text fontSize="$sm" color="$error600">
+                    {whatsappError}
+                  </Text>
+                ) : null}
+                <Button bg={brand} onPress={handleVerifyWhatsappCode} isDisabled={whatsappLoading}>
+                  <ButtonText>{whatsappLoading ? t.whatsappVerifying : t.whatsappVerify}</ButtonText>
+                </Button>
+                <Button
+                  variant="outline"
+                  onPress={() => requestWhatsappVerification(pendingKycData)}
+                  isDisabled={whatsappLoading}
+                >
+                  <ButtonText>{whatsappLoading ? t.whatsappSending : t.whatsappResend}</ButtonText>
+                </Button>
+              </VStack>
+            </Box>
+          )}
         </VStack>
       </ScrollView>
     </Box>

@@ -1,17 +1,20 @@
-/** Tiendas departamentales y supermercados cercanos (mock inicial). */
+/** Tiendas, supermercados y cafés cercanos. */
 export interface NearbyStore {
   id: string;
   name: string;
   nameEs: string;
-  type: 'department' | 'supermarket';
+  type: 'department' | 'supermarket' | 'coffee';
   address: string;
   addressEs: string;
   latitude: number;
   longitude: number;
+  status?: 'active' | 'inactive';
+  whatsapp?: string;
+  source?: string;
 }
 
 /** Datos base: coordenadas relativas a CDMX centro. En producción podrías usar Google Places API. */
-const CDMX_CENTER = { lat: 19.4326, lng: -99.1332 };
+export const CDMX_CENTER = { lat: 19.4326, lng: -99.1332 };
 
 const STORES_BASE: Omit<NearbyStore, 'latitude' | 'longitude'>[] = [
   { id: '1', name: 'Liverpool', nameEs: 'Liverpool', type: 'department', address: 'Av. Insurgentes Sur 1458', addressEs: 'Av. Insurgentes Sur 1458' },
@@ -43,7 +46,21 @@ export const MOCK_NEARBY_STORES: NearbyStore[] = STORES_BASE.map((s, i) => {
     latitude: CDMX_CENTER.lat + dLat,
     longitude: CDMX_CENTER.lng + dLng,
   };
-});
+}).concat([
+  {
+    id: 'chalino-cafeteria-pugibet-82',
+    name: 'Chalino Cafetería',
+    nameEs: 'Chalino Cafetería',
+    type: 'coffee',
+    address: 'Ernesto Pugibet 82 - Local M, Centro, Cuauhtémoc, CDMX 06070',
+    addressEs: 'Ernesto Pugibet 82 - Local M, Centro, Cuauhtémoc, CDMX 06070',
+    latitude: 19.4300062,
+    longitude: -99.1468343,
+    status: 'active',
+    whatsapp: '1122334455',
+    source: 'BizneAI',
+  },
+]);
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371; // km

@@ -34,6 +34,9 @@ import {
   type InfluencerPlatform,
   type CreateInfluencerPayload,
 } from '../services/influencersApi';
+import { getAuthAccessToken } from '../services/storage';
+import { openInfluencerProfile } from '../utils/influencerProfileUrl';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 const PLATFORM_OPTIONS: { id: InfluencerPlatform; label: string; short: string }[] = [
   { id: 'youtube', label: 'YouTube', short: 'YT' },
@@ -77,15 +80,27 @@ const COUNTRIES = [
   { id: 'other', labelEs: 'Otro', labelEn: 'Other' },
 ];
 
-export default function InfluencerSearchScreen() {
+export interface InfluencerSearchScreenProps {
+  embedded?: boolean;
+  initialQuery?: string;
+  platform?: InfluencerPlatform;
+  imageUri?: string;
+}
+
+export default function InfluencerSearchScreen(props: InfluencerSearchScreenProps = {}) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const route = useRoute<RouteProp<RootStackParamList, 'InfluencerSearch'>>();
+  const route = useRoute<RouteProp<RootStackParamList, 'Monetization'>>();
   const { language, currency } = useSettings();
+  const { brand, brandBg, brandBorder } = useBrandTheme();
   const { addLuxaeBalance } = useWalletBalance();
 
-  const initialQuery = route.params?.initialQuery ?? '';
-  const initialPlatform = (route.params?.platform ?? 'youtube') as InfluencerPlatform;
-  const initialImageUri = route.params?.imageUri;
+  const routeParams = route.params;
+
+  const initialQuery = props.initialQuery ?? routeParams?.initialQuery ?? '';
+  const initialPlatform = (props.platform ??
+    (routeParams && 'platform' in routeParams ? routeParams.platform : undefined) ??
+    'youtube') as InfluencerPlatform;
+  const initialImageUri = props.imageUri ?? routeParams?.imageUri;
 
   const [query, setQuery] = useState(initialQuery);
   const [platform, setPlatform] = useState<InfluencerPlatform>(initialPlatform);
@@ -134,6 +149,7 @@ export default function InfluencerSearchScreen() {
     addAnother: language === 'es' ? 'Agregar otro' : 'Add another',
     done: language === 'es' ? 'Listo' : 'Done',
     viewInfluencersFeed: language === 'es' ? 'Ver Influencers y votar' : 'See Influencers & Vote',
+    viewProfileWeb: language === 'es' ? 'Ver perfil en DameCodigo' : 'View profile on DameCodigo',
     cancel: language === 'es' ? 'Cancelar' : 'Cancel',
     ok: language === 'es' ? 'Aceptar' : 'OK',
     analyzing: language === 'es' ? 'Analizando con IA...' : 'Analyzing with AI...',
@@ -350,11 +366,16 @@ export default function InfluencerSearchScreen() {
       socialMedia: socialMedia.length ? socialMedia : undefined,
       avatar: avatarUrl,
     };
-    const result = await createInfluencer(payload);
+    const authToken = await getAuthAccessToken();
+    const result = await createInfluencer(payload, { authToken: authToken ?? undefined });
     if (result.ok && result.data) {
       setCreatedInfluencer(result.data);
       setShowCreateForm(false);
-      await addLuxaeBalance(INFLUENCER_REWARD_LUXAE);
+      void openInfluencerProfile(result.data, language);
+      await addLuxaeBalance(INFLUENCER_REWARD_LUXAE, {
+        titleEs: 'Recompensa por registrar influencer',
+        titleEn: 'Reward for registering an influencer',
+      });
       setRewardAmount(INFLUENCER_REWARD_LUXAE);
       setShowRewardModal(true);
       return;
@@ -438,7 +459,7 @@ export default function InfluencerSearchScreen() {
                   <Pressable
                     key={p.id}
                     onPress={() => setPlatform(p.id)}
-                    bg={isSelected ? '#00704A' : '$backgroundLight100'}
+                    bg={isSelected ? brand : '$backgroundLight100'}
                     borderRadius="$full"
                     px="$3"
                     py="$1.5"
@@ -463,7 +484,7 @@ export default function InfluencerSearchScreen() {
               </Input>
               <Pressable
                 onPress={handleSearch}
-                bg="#00704A"
+                bg={brand}
                 borderRadius="$lg"
                 px="$4"
                 py="$2"
@@ -490,10 +511,10 @@ export default function InfluencerSearchScreen() {
           <Box bg="$error100" p="$3" borderRadius="$md">
             <Text color="$error700" fontSize="$sm" mb="$2">{error}</Text>
             <Pressable onPress={openWebForm}>
-              <Text fontSize="$sm" color="#00704A" fontWeight="$semibold" textDecorationLine="underline">
+              <Text fontSize="$sm" color={brand} fontWeight="$semibold" textDecorationLine="underline">
                 🔗 {t.searchFailedAlternative}
               </Text>
-              <Text fontSize="$xs" color="#00704A" mt="$1">
+              <Text fontSize="$xs" color={brand} mt="$1">
                 {INFLUENCER_SETUP_URL}
               </Text>
             </Pressable>
@@ -510,7 +531,8 @@ export default function InfluencerSearchScreen() {
                 influencer={inf}
                 compact
                 language={language}
-                onPress={() => {}}
+                showDameCodigoProfileLink
+                onPress={() => void openInfluencerProfile(inf, language)}
               />
             ))}
           </VStack>
@@ -519,24 +541,38 @@ export default function InfluencerSearchScreen() {
         {/* Tarjeta del influencer recién creado */}
         {createdInfluencer && (
           <VStack space="md">
-            <Text fontSize="$lg" fontWeight="$bold" color="#00704A">
+            <Text fontSize="$lg" fontWeight="$bold" color={brand}>
               {language === 'es' ? '¡Influencer creado!' : 'Influencer created!'}
             </Text>
-            <InfluencerCard influencer={createdInfluencer} compact={false} language={language} />
+            <InfluencerCard
+              influencer={createdInfluencer}
+              compact={false}
+              language={language}
+              showDameCodigoProfileLink
+              onPress={() => void openInfluencerProfile(createdInfluencer, language)}
+            />
             <HStack space="sm" flexWrap="wrap">
-              <Button flex={1} minW={120} onPress={resetAndAddAnother} variant="outline" borderColor="#00704A">
-                <ButtonText color="#00704A">{t.addAnother}</ButtonText>
+              <Button
+                flex={1}
+                minW={120}
+                onPress={() => void openInfluencerProfile(createdInfluencer, language)}
+                bg="#1a73e8"
+              >
+                <ButtonText color="$white">{t.viewProfileWeb}</ButtonText>
+              </Button>
+              <Button flex={1} minW={120} onPress={resetAndAddAnother} variant="outline" borderColor={brand}>
+                <ButtonText color={brand}>{t.addAnother}</ButtonText>
               </Button>
               <Button
                 flex={1}
                 minW={120}
                 onPress={() => navigation.navigate('InfluencersList')}
                 variant="outline"
-                borderColor="#00704A"
+                borderColor={brand}
               >
-                <ButtonText color="#00704A">{t.viewInfluencersFeed}</ButtonText>
+                <ButtonText color={brand}>{t.viewInfluencersFeed}</ButtonText>
               </Button>
-              <Button flex={1} minW={120} onPress={() => navigation.goBack()} bg="#00704A">
+              <Button flex={1} minW={120} onPress={() => navigation.goBack()} bg={brand}>
                 <ButtonText color="$white">{t.done}</ButtonText>
               </Button>
             </HStack>
@@ -546,7 +582,7 @@ export default function InfluencerSearchScreen() {
         {/* Formulario para crear (cuando no existe) */}
         {showCreateForm && !createdInfluencer && (
           <VStack space="md">
-            <Box bg="#e8f5e9" borderRadius="$lg" p="$4" borderWidth={1} borderColor="#00704A" borderLeftWidth={4}>
+            <Box bg={brandBg} borderRadius="$lg" p="$4" borderWidth={1} borderColor={brand} borderLeftWidth={4}>
               <Text fontSize="$sm" color="$textLight700" lineHeight="$lg">
                 ✨ {t.notSignedUpMessage}
               </Text>
@@ -573,7 +609,7 @@ export default function InfluencerSearchScreen() {
                       py="$2"
                       _pressed={{ opacity: 0.9 }}
                     >
-                      <Text fontSize="$sm" color="#00704A" fontWeight="$medium">{t.changePhoto}</Text>
+                      <Text fontSize="$sm" color={brand} fontWeight="$medium">{t.changePhoto}</Text>
                     </Pressable>
                   </HStack>
                 ) : (
@@ -632,7 +668,7 @@ export default function InfluencerSearchScreen() {
                             location: country.id === 'other' ? '' : label,
                           }))
                         }
-                        bg={isSelected ? '#00704A' : '$backgroundLight100'}
+                        bg={isSelected ? brand : '$backgroundLight100'}
                         borderRadius="$full"
                         px="$2"
                         py="$1"
@@ -668,7 +704,7 @@ export default function InfluencerSearchScreen() {
                             : [...(f.categories ?? []), c.id],
                         }))
                       }
-                      bg={isSelected ? '#00704A' : '$backgroundLight100'}
+                      bg={isSelected ? brand : '$backgroundLight100'}
                       borderRadius="$full"
                       px="$2"
                       py="$1"
@@ -724,7 +760,7 @@ export default function InfluencerSearchScreen() {
                 </VStack>
                 <Button
                 onPress={handleSubmit}
-                bg="#00704A"
+                bg={brand}
                 disabled={creating}
               >
                 <ButtonText color="$white">{creating ? '…' : t.submit}</ButtonText>
@@ -734,7 +770,7 @@ export default function InfluencerSearchScreen() {
                   {language === 'es' ? '¿Prefieres usar la web?' : 'Prefer to use the web?'}
                 </Text>
                 <Pressable onPress={openWebForm}>
-                  <Text fontSize="$sm" color="#00704A" fontWeight="$semibold" textDecorationLine="underline">
+                  <Text fontSize="$sm" color={brand} fontWeight="$semibold" textDecorationLine="underline">
                     🔗 {t.createViaWeb}
                   </Text>
                   <Text fontSize="$2xs" color="$textLight500" mt="$0.5">{INFLUENCER_SETUP_URL}</Text>
@@ -763,10 +799,10 @@ export default function InfluencerSearchScreen() {
             >
               <Box bg="$white" borderRadius="$2xl" p="$6" alignItems="center">
                 <Text fontSize="$3xl" mb="$2">🎉</Text>
-                <Text fontSize="$xl" fontWeight="$bold" color="#00704A" mb="$2">
+                <Text fontSize="$xl" fontWeight="$bold" color={brand} mb="$2">
                   {language === 'es' ? '¡Recompensa!' : 'Reward!'}
                 </Text>
-                <Text fontSize="$lg" fontWeight="$bold" color="#00704A">
+                <Text fontSize="$lg" fontWeight="$bold" color={brand}>
                   +{rewardAmount} {TOKEN_SYMBOL}
                 </Text>
                 <Text fontSize="$sm" color="$textLight600" mt="$1">
@@ -783,9 +819,20 @@ export default function InfluencerSearchScreen() {
                     : `You earned ${rewardAmount} ${TOKEN_SYMBOL} for registering an influencer.`}
                 </Text>
                 <VStack space="sm" w="$full" mt="$5">
+                  {createdInfluencer ? (
+                    <Button
+                      size="md"
+                      bg="#1a73e8"
+                      onPress={() => {
+                        void openInfluencerProfile(createdInfluencer, language);
+                      }}
+                    >
+                      <ButtonText color="$white">{t.viewProfileWeb}</ButtonText>
+                    </Button>
+                  ) : null}
                   <Button
                     size="md"
-                    bg="#00704A"
+                    bg={brand}
                     onPress={() => {
                       setShowRewardModal(false);
                       navigation.navigate('InfluencersList');
@@ -793,8 +840,8 @@ export default function InfluencerSearchScreen() {
                   >
                     <ButtonText>{t.viewInfluencersFeed}</ButtonText>
                   </Button>
-                  <Button size="md" variant="outline" borderColor="#00704A" onPress={() => setShowRewardModal(false)}>
-                    <ButtonText color="#00704A">{language === 'es' ? '¡Entendido!' : 'Got it!'}</ButtonText>
+                  <Button size="md" variant="outline" borderColor={brand} onPress={() => setShowRewardModal(false)}>
+                    <ButtonText color={brand}>{language === 'es' ? '¡Entendido!' : 'Got it!'}</ButtonText>
                   </Button>
                 </VStack>
               </Box>
@@ -819,7 +866,7 @@ export default function InfluencerSearchScreen() {
               borderStyle="dashed"
               _pressed={{ opacity: 0.9 }}
             >
-              <Text fontSize="$md" color="#00704A" fontWeight="$semibold" textAlign="center">
+              <Text fontSize="$md" color={brand} fontWeight="$semibold" textAlign="center">
                 🔗 {t.createViaWeb}
               </Text>
               <Text fontSize="$xs" color="$textLight500" textAlign="center" mt="$1">

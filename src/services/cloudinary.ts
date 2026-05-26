@@ -48,8 +48,23 @@ export interface CloudinaryUploadOptions {
  * @param options - Upload options (folder, tags, transformations, etc.)
  * @returns Promise with upload result containing Cloudinary URL
  */
-export async function uploadToCloudinary(
-  imageUri: string,
+function guessMime(filename: string, resourceType: 'image' | 'video'): string {
+  const match = /\.(\w+)$/.exec(filename);
+  const ext = (match?.[1] ?? '').toLowerCase();
+  if (resourceType === 'video') {
+    if (ext === 'webm') return 'video/webm';
+    if (ext === 'mov') return 'video/quicktime';
+    return 'video/mp4';
+  }
+  if (ext === 'png') return 'image/png';
+  if (ext === 'gif') return 'image/gif';
+  if (ext === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+export async function uploadMediaToCloudinary(
+  fileUri: string,
+  resourceType: 'image' | 'video',
   options: CloudinaryUploadOptions = {}
 ): Promise<CloudinaryUploadResult> {
   if (!CLOUDINARY_CLOUD_NAME) {
@@ -60,46 +75,38 @@ export async function uploadToCloudinary(
     throw new Error('Cloudinary upload preset is not configured');
   }
 
-  // Create form data
   const formData = new FormData();
-  
-  // Convert local URI to blob for upload
-  const filename = imageUri.split('/').pop() || 'image.jpg';
-  const match = /\.(\w+)$/.exec(filename);
-  const type = match ? `image/${match[1]}` : 'image/jpeg';
+  const filename =
+    fileUri.split('/').pop() ||
+    (resourceType === 'video' ? 'video.mp4' : 'image.jpg');
+  const mime = guessMime(filename, resourceType);
 
-  // @ts-ignore - FormData append with file object
+  // @ts-ignore - React Native FormData file
   formData.append('file', {
-    uri: imageUri,
+    uri: fileUri,
     name: filename,
-    type: type,
+    type: mime,
   } as any);
 
   formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
-  formData.append('cloud_name', CLOUDINARY_CLOUD_NAME);
 
-  // Add folder if specified
   const folder = options.folder || CLOUDINARY_UPLOAD_FOLDER;
   if (folder) {
     formData.append('folder', folder);
   }
 
-  // Add public ID if specified
   if (options.publicId) {
     formData.append('public_id', options.publicId);
   }
 
-  // Add transformations if specified
   if (options.transformation) {
     formData.append('transformation', options.transformation);
   }
 
-  // Add tags if specified
-  if (options.tags && options.tags.length > 0) {
+  if (options.tags?.length) {
     formData.append('tags', options.tags.join(','));
   }
 
-  // Add context if specified
   if (options.context) {
     const contextStrings = Object.entries(options.context).map(
       ([key, value]) => `${key}=${value}`
@@ -107,30 +114,31 @@ export async function uploadToCloudinary(
     formData.append('context', contextStrings.join('|'));
   }
 
-  try {
-    const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+  const resource = resourceType === 'video' ? 'video' : 'image';
+  const uploadUrl = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/${resource}/upload`;
 
-    const response = await fetch(uploadUrl, {
-      method: 'POST',
-      body: formData,
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    body: formData,
+  });
 
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.error?.message || `Upload failed: ${response.statusText}`
-      );
-    }
-
-    const result: CloudinaryUploadResult = await response.json();
-    return result;
-  } catch (error) {
-    console.error('Cloudinary upload error:', error);
-    throw error;
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      (errorData as { error?: { message?: string } }).error?.message ||
+        `Upload failed: ${response.statusText}`
+    );
   }
+
+  return response.json() as Promise<CloudinaryUploadResult>;
+}
+
+/** @deprecated Use uploadMediaToCloudinary(uri, 'image') */
+export async function uploadToCloudinary(
+  imageUri: string,
+  options: CloudinaryUploadOptions = {}
+): Promise<CloudinaryUploadResult> {
+  return uploadMediaToCloudinary(imageUri, 'image', options);
 }
 
 /**

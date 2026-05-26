@@ -7,8 +7,10 @@ import { Box, Text, VStack, HStack, Pressable } from '@gluestack-ui/themed';
 import { Image, Linking, Alert, Pressable as RNPressable } from 'react-native';
 import type { InfluencerDoc, InfluencerFollowers } from '../services/influencersApi';
 import { resolveInfluencerImageUrl } from '../services/influencersApi';
+import { getInfluencerProfileUrl, openInfluencerProfile } from '../utils/influencerProfileUrl';
 import CardSocialActions from './CardSocialActions';
 import { getCardSocialStrings } from '../i18n/uiStrings';
+import { useBrandTheme } from '../theme/useBrandTheme';
 
 interface InfluencerCardProps {
   influencer: InfluencerDoc;
@@ -23,6 +25,14 @@ interface InfluencerCardProps {
   voteCount?: number;
   /** Si el usuario actual votó por este influencer */
   isVoted?: boolean;
+  /** Muestra enlace al perfil público en www.damecodigo.com/influencer/:slug */
+  showDameCodigoProfileLink?: boolean;
+  /** Botón de voto integrado en la tarjeta (feed masonry) */
+  showVoteAction?: boolean;
+  onVotePress?: () => void;
+  voteLabel?: string;
+  votedLabel?: string;
+  youVotedBadge?: string;
 }
 
 /** Construye la URL del perfil según la plataforma */
@@ -122,7 +132,14 @@ export default function InfluencerCard({
   language = 'es',
   voteCount,
   isVoted,
+  showDameCodigoProfileLink = false,
+  showVoteAction = false,
+  onVotePress,
+  voteLabel,
+  votedLabel,
+  youVotedBadge,
 }: InfluencerCardProps) {
+  const { brand } = useBrandTheme();
   const displayName = influencer.displayName ?? influencer.name ?? '';
   const bio = (influencer.bio ?? '').slice(0, compact ? 80 : 200);
   const masonryBio = (influencer.bio ?? '').slice(0, 100);
@@ -135,6 +152,14 @@ export default function InfluencerCard({
     influencer.avatar ?? influencer.profileImageUrl
   );
   const cardSocial = useMemo(() => getCardSocialStrings(language), [language]);
+  const dameCodigoProfileUrl = useMemo(
+    () => (showDameCodigoProfileLink ? getInfluencerProfileUrl(influencer) : null),
+    [influencer, showDameCodigoProfileLink]
+  );
+
+  const handleViewDameCodigoProfile = () => {
+    void openInfluencerProfile(influencer, language);
+  };
 
   const handleViewChannel = () => {
     if (!channelUrl) return;
@@ -157,14 +182,82 @@ export default function InfluencerCard({
         ? '1 person wants their promotion'
         : `${displayVoteCount} people want their promotion`;
 
+  const voteActionBlock =
+    showVoteAction && onVotePress ? (
+      <Box
+        mt="$2"
+        pt="$2"
+        borderTopWidth={1}
+        borderTopColor="$borderLight200"
+        width="100%"
+      >
+        <HStack alignItems="center" justifyContent="space-between" mb="$2" space="xs">
+          <HStack alignItems="center" space="xs" flex={1}>
+            <Text fontSize="$md">{isVoted ? '💚' : '🗳️'}</Text>
+            <Text fontSize="$2xs" color="$textLight600" flex={1} numberOfLines={2}>
+              {statsLabel}
+            </Text>
+          </HStack>
+          {isVoted && youVotedBadge ? (
+            <Box bg="rgba(0,112,74,0.14)" borderRadius="$full" px="$2" py="$0.5">
+              <Text fontSize="$2xs" color={brand} fontWeight="$bold">
+                {youVotedBadge}
+              </Text>
+            </Box>
+          ) : null}
+        </HStack>
+        <RNPressable
+          onPress={() => onVotePress()}
+          style={({ pressed }) => ({
+            borderRadius: 999,
+            paddingVertical: 11,
+            paddingHorizontal: 14,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: isVoted ? brand : '#f3f4f6',
+            borderWidth: isVoted ? 0 : 1,
+            borderColor: '#d1d5db',
+            opacity: pressed ? 0.88 : 1,
+          })}
+        >
+          <Text
+            fontSize="$sm"
+            fontWeight="$bold"
+            color={isVoted ? '#fff' : '#374151'}
+            textAlign="center"
+          >
+            {isVoted ? (votedLabel ?? '✓ Votado') : (voteLabel ?? 'Quiero su promoción')}
+          </Text>
+        </RNPressable>
+      </Box>
+    ) : null;
+
   if (variant === 'masonry') {
+    const imageBlock = imageUrl ? (
+      <Image
+        source={{ uri: imageUrl }}
+        style={{ width: '100%', aspectRatio: masonryAspectRatio }}
+        resizeMode="cover"
+      />
+    ) : (
+      <Box
+        w="100%"
+        aspectRatio={masonryAspectRatio}
+        bg="$backgroundLight200"
+        alignItems="center"
+        justifyContent="center"
+      >
+        <Text fontSize="$6xl">👤</Text>
+      </Box>
+    );
+
     const masonryContent = (
       <Box
         bg="$white"
         borderRadius="$xl"
         overflow="hidden"
-        borderWidth={1}
-        borderColor="$borderLight200"
+        borderWidth={isVoted && showVoteAction ? 2 : 1}
+        borderColor={isVoted && showVoteAction ? brand : '$borderLight200'}
         width="100%"
         shadowColor="$black"
         shadowOffset={{ width: 0, height: 2 }}
@@ -172,22 +265,14 @@ export default function InfluencerCard({
         shadowRadius={4}
         elevation={2}
       >
-        {imageUrl ? (
-          <Image
-            source={{ uri: imageUrl }}
-            style={{ width: '100%', aspectRatio: masonryAspectRatio }}
-            resizeMode="cover"
-          />
+        {onPress && !showVoteAction ? (
+          <Pressable onPress={onPress}>{imageBlock}</Pressable>
+        ) : onPress ? (
+          <Pressable onPress={onPress} accessibilityRole="button">
+            {imageBlock}
+          </Pressable>
         ) : (
-          <Box
-            w="100%"
-            aspectRatio={masonryAspectRatio}
-            bg="$backgroundLight200"
-            alignItems="center"
-            justifyContent="center"
-          >
-            <Text fontSize="$6xl">👤</Text>
-          </Box>
+          imageBlock
         )}
         <CardSocialActions
           language={language}
@@ -195,7 +280,7 @@ export default function InfluencerCard({
           shareUrl={channelUrl?.url}
         />
         <VStack p="$3" space="xs">
-          <Text fontSize="$md" fontWeight="$bold" color="#00704A" numberOfLines={2}>
+          <Text fontSize="$md" fontWeight="$bold" color={brand} numberOfLines={2}>
             {displayName}
           </Text>
           {(totalFollowers > 0 || mainSocial) && (
@@ -243,26 +328,36 @@ export default function InfluencerCard({
               })}
               hitSlop={8}
             >
-              <Text fontSize="$xs" color="#00704A" fontWeight="$semibold">
+              <Text fontSize="$xs" color={brand} fontWeight="$semibold">
                 {language === 'es' ? `Ver canal · ${channelUrl.platform}` : `View channel · ${channelUrl.platform}`}
               </Text>
             </RNPressable>
           )}
-          {(displayVoteCount > 0 || (voteCount === 0 && voteCount !== undefined)) && (
+          {dameCodigoProfileUrl ? (
+            <RNPressable
+              onPress={handleViewDameCodigoProfile}
+              style={({ pressed }) => ({
+                paddingVertical: 8,
+                paddingHorizontal: 0,
+                opacity: pressed ? 0.85 : 1,
+              })}
+              hitSlop={8}
+            >
+              <Text fontSize="$xs" color="#1a73e8" fontWeight="$semibold">
+                {language === 'es' ? 'Ver perfil en DameCodigo' : 'View profile on DameCodigo'}
+              </Text>
+            </RNPressable>
+          ) : null}
+          {!showVoteAction &&
+          (displayVoteCount > 0 || (voteCount === 0 && voteCount !== undefined)) ? (
             <Text fontSize="$2xs" color="$textLight500" numberOfLines={2}>
               📊 {statsLabel}
             </Text>
-          )}
+          ) : null}
+          {voteActionBlock}
         </VStack>
       </Box>
     );
-    if (onPress) {
-      return (
-        <Pressable onPress={onPress} width="100%">
-          {masonryContent}
-        </Pressable>
-      );
-    }
     return masonryContent;
   }
 
@@ -295,7 +390,7 @@ export default function InfluencerCard({
           </Box>
         )}
         <VStack flex={1} space="xs">
-          <Text fontSize="$md" fontWeight="$bold" color="#00704A">
+          <Text fontSize="$md" fontWeight="$bold" color={brand}>
             {displayName}
           </Text>
           {(totalFollowers > 0 || mainSocial) && (
@@ -358,16 +453,34 @@ export default function InfluencerCard({
                   paddingVertical: 8,
                   borderRadius: 8,
                   borderWidth: 1,
-                  borderColor: '#00704A',
+                  borderColor: brand,
                   backgroundColor: pressed ? 'rgba(0,112,74,0.1)' : 'transparent',
                 })}
                 hitSlop={8}
               >
-                <Text fontSize="$sm" color="#00704A" fontWeight="$medium">
+                <Text fontSize="$sm" color={brand} fontWeight="$medium">
                   {language === 'es' ? `Ver canal (${channelUrl.platform})` : `View channel (${channelUrl.platform})`}
                 </Text>
               </RNPressable>
             )}
+            {dameCodigoProfileUrl ? (
+              <RNPressable
+                onPress={handleViewDameCodigoProfile}
+                style={({ pressed }) => ({
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  borderWidth: 1,
+                  borderColor: '#1a73e8',
+                  backgroundColor: pressed ? 'rgba(26,115,232,0.08)' : 'transparent',
+                })}
+                hitSlop={8}
+              >
+                <Text fontSize="$sm" color="#1a73e8" fontWeight="$medium">
+                  {language === 'es' ? 'Perfil DameCodigo' : 'DameCodigo profile'}
+                </Text>
+              </RNPressable>
+            ) : null}
             {(displayVoteCount > 0 || (voteCount === 0 && voteCount !== undefined)) && (
               <Text fontSize="$xs" color="$textLight500">
                 📊 {statsLabel}

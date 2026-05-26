@@ -20,6 +20,7 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { useSettings } from '../context/SettingsContext';
+import { useBrandTheme } from '../theme/useBrandTheme';
 import InfluencerCard from '../components/InfluencerCard';
 import PromotionCard from '../components/PromotionCard';
 import { getAllInfluencers, type InfluencerDoc } from '../services/influencersApi';
@@ -28,8 +29,16 @@ import {
   type ApiPromotionDoc,
   SITE_PROMO_URLS,
 } from '../services/promotionsApi';
-import { getInfluencerVotes, setInfluencerVote } from '../services/storage';
+import {
+  getInfluencerVotes,
+  setInfluencerVote,
+  getInfluencerVoteTallies,
+  mergeInfluencerVoteTalliesFromServer,
+  resolveInfluencerDisplayVoteCount,
+  type InfluencerVoteTallies,
+} from '../services/storage';
 import { getInfluencersFeedStrings } from '../i18n/uiStrings';
+import { openInfluencerProfile } from '../utils/influencerProfileUrl';
 
 type FeedItem =
   | { kind: 'influencer'; inf: InfluencerDoc; key: string }
@@ -89,7 +98,7 @@ function estimateItemHeight(it: FeedItem, columnWidth: number): number {
   }
   const ar = aspectRatioForFeedKey(it.key);
   const imageH = columnWidth / ar;
-  return imageH + 210;
+  return imageH + 280;
 }
 
 function splitIntoTwoColumns(
@@ -113,11 +122,11 @@ function splitIntoTwoColumns(
   return { left, right };
 }
 
-const GREEN = '#00704A';
 const BG = '#f4f6f8';
 
 export default function InfluencersListScreen() {
   const { language } = useSettings();
+  const { brand } = useBrandTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
@@ -130,6 +139,8 @@ export default function InfluencersListScreen() {
   const [influencers, setInfluencers] = useState<InfluencerDoc[]>([]);
   const [promotions, setPromotions] = useState<ApiPromotionDoc[]>([]);
   const [votedIds, setVotedIds] = useState<Set<string>>(new Set());
+  const [voteTallies, setVoteTallies] = useState<InfluencerVoteTallies>({});
+  const [voteFeedback, setVoteFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -138,13 +149,28 @@ export default function InfluencersListScreen() {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
     setError(null);
-    const [listRes, promoRes, votes] = await Promise.all([
+    const [listRes, promoRes, votes, talliesRaw] = await Promise.all([
       getAllInfluencers({ limit: 50 }),
       getPromotions({ limit: 24, status: 'active' }),
       getInfluencerVotes(),
+      getInfluencerVoteTallies(),
     ]);
     if (listRes.ok) {
-      setInfluencers(listRes.influencers ?? []);
+      const list = listRes.influencers ?? [];
+      setInfluencers(list);
+      const merged = await mergeInfluencerVoteTalliesFromServer(
+        list.map((inf) => {
+          const id = inf._id ?? inf.id ?? '';
+          const server =
+            typeof (inf as { wantPromotionCount?: number }).wantPromotionCount === 'number'
+              ? (inf as { wantPromotionCount: number }).wantPromotionCount
+              : typeof (inf as { voteCount?: number }).voteCount === 'number'
+                ? (inf as { voteCount: number }).voteCount
+                : undefined;
+          return { id, serverCount: server };
+        })
+      );
+      setVoteTallies(merged);
     } else {
       setError(listRes.error ?? getInfluencersFeedStrings(language).errorFallback);
       setInfluencers([]);
@@ -155,9 +181,16 @@ export default function InfluencersListScreen() {
       setPromotions([]);
     }
     setVotedIds(new Set(votes));
+    if (!listRes.ok) setVoteTallies(talliesRaw);
     setLoading(false);
     setRefreshing(false);
   }, [language]);
+
+  useEffect(() => {
+    if (!voteFeedback) return;
+    const feedbackTimer = setTimeout(() => setVoteFeedback(null), 2800);
+    return () => clearTimeout(feedbackTimer);
+  }, [voteFeedback]);
 
   useFocusEffect(
     useCallback(() => {
@@ -169,19 +202,31 @@ export default function InfluencersListScreen() {
     void loadData(true);
   }, [loadData]);
 
-  const toggleVote = useCallback(async (inf: InfluencerDoc) => {
-    const id = inf._id ?? inf.id ?? '';
-    if (!id) return;
-    const currentlyVoted = votedIds.has(id);
-    const nextVoted = !currentlyVoted;
-    await setInfluencerVote(id, nextVoted);
-    setVotedIds((prev) => {
-      const next = new Set(prev);
-      if (nextVoted) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }, [votedIds]);
+  const strings = useMemo(() => getInfluencersFeedStrings(language), [language]);
+
+  const getServerVoteBaseline = useCallback((inf: InfluencerDoc): number | undefined => {
+    const w = (inf as { wantPromotionCount?: number }).wantPromotionCount;
+    if (typeof w === 'number') return w;
+    const v = (inf as { voteCount?: number }).voteCount;
+    if (typeof v === 'number') return v;
+    return undefined;
+  }, []);
+
+  const toggleVote = useCallback(
+    async (inf: InfluencerDoc) => {
+      const id = inf._id ?? inf.id ?? '';
+      if (!id) return;
+      const currentlyVoted = votedIds.has(id);
+      const nextVoted = !currentlyVoted;
+      const { votedIds: nextIds, displayCount } = await setInfluencerVote(id, nextVoted, {
+        serverBaseline: getServerVoteBaseline(inf),
+      });
+      setVotedIds(new Set(nextIds));
+      setVoteTallies((prev) => ({ ...prev, [id]: displayCount }));
+      setVoteFeedback(nextVoted ? strings.voteSaved : strings.voteRemoved);
+    },
+    [votedIds, getServerVoteBaseline, strings.voteSaved, strings.voteRemoved]
+  );
 
   const horizontalPad = 14;
   const columnGap = 11;
@@ -201,7 +246,11 @@ export default function InfluencersListScreen() {
     [feedItems, columnWidth]
   );
 
-  const t = useMemo(() => getInfluencersFeedStrings(language), [language]);
+  const yourVotesSummary = useMemo(() => {
+    const n = votedIds.size;
+    if (n <= 0) return null;
+    return strings.yourVotesCount.replace('{n}', String(n));
+  }, [votedIds.size, strings.yourVotesCount]);
 
   const openPromotionUrl = useCallback((doc: ApiPromotionDoc) => {
     const url = SITE_PROMO_URLS.promotionDetail(doc._id);
@@ -213,7 +262,7 @@ export default function InfluencersListScreen() {
       return (
         <View key={item.key} style={styles.feedBlock}>
           <View style={styles.promoBadgeRow}>
-            <Text style={styles.promoBadge}>{t.promoLabel.toUpperCase()}</Text>
+            <Text style={styles.promoBadge}>{strings.promoLabel.toUpperCase()}</Text>
           </View>
           <PromotionCard
             doc={item.doc}
@@ -230,42 +279,31 @@ export default function InfluencersListScreen() {
     const inf = item.inf;
     const id = inf._id ?? inf.id ?? '';
     const isVoted = votedIds.has(id);
-    const voteCount =
-      typeof (inf as { wantPromotionCount?: number }).wantPromotionCount === 'number'
-        ? (inf as { wantPromotionCount: number }).wantPromotionCount
-        : typeof (inf as { voteCount?: number }).voteCount === 'number'
-          ? (inf as { voteCount: number }).voteCount
-          : undefined;
+    const displayVoteCount = resolveInfluencerDisplayVoteCount(
+      id,
+      voteTallies,
+      getServerVoteBaseline(inf)
+    );
 
     return (
       <View key={item.key} style={styles.feedBlock}>
-        <View
-          style={[
-            styles.infCardWrap,
-            isVoted && { borderWidth: 2, borderColor: GREEN },
-          ]}
-        >
+        <View style={styles.infCardWrap}>
           <InfluencerCard
             influencer={inf}
             variant="masonry"
             masonryAspectRatio={aspectRatioForFeedKey(item.key)}
             language={language}
             isVoted={isVoted}
-            voteCount={voteCount}
+            voteCount={displayVoteCount}
+            showDameCodigoProfileLink
+            showVoteAction
+            voteLabel={strings.vote}
+            votedLabel={strings.voted}
+            youVotedBadge={strings.youVotedBadge}
+            onVotePress={() => void toggleVote(inf)}
+            onPress={() => void openInfluencerProfile(inf, language)}
           />
         </View>
-        <Pressable
-          onPress={() => toggleVote(inf)}
-          style={({ pressed }) => [
-            styles.voteBtn,
-            isVoted ? styles.voteBtnOn : styles.voteBtnOff,
-            pressed && { opacity: 0.9 },
-          ]}
-        >
-          <Text style={[styles.voteBtnText, isVoted && styles.voteBtnTextOn]}>
-            {isVoted ? t.voted : t.vote}
-          </Text>
-        </Pressable>
       </View>
     );
   };
@@ -285,26 +323,34 @@ export default function InfluencersListScreen() {
         <RefreshControl
           refreshing={refreshing}
           onRefresh={onRefresh}
-          tintColor={GREEN}
-          colors={[GREEN]}
+          tintColor={brand}
+          colors={[brand]}
         />
       }
     >
       <View style={styles.section}>
-        <View style={styles.hero}>
-          <Text style={styles.heroKicker}>{t.feedKicker}</Text>
-          <Text style={styles.heroTitle}>{t.title}</Text>
-          <Text style={styles.heroSubtitle}>{t.subtitle}</Text>
-          <Text style={styles.heroHint}>{t.feedHint}</Text>
+        <View style={[styles.hero, { backgroundColor: brand }]}>
+          <Text style={styles.heroKicker}>{strings.feedKicker}</Text>
+          <Text style={styles.heroTitle}>{strings.title}</Text>
+          <Text style={styles.heroSubtitle}>{strings.subtitle}</Text>
+          <Text style={styles.heroHint}>{strings.feedHint}</Text>
+          {yourVotesSummary ? (
+            <Text style={styles.heroVotesSummary}>{yourVotesSummary}</Text>
+          ) : null}
+          {voteFeedback ? (
+            <View style={styles.voteFeedbackBox}>
+              <Text style={styles.voteFeedbackText}>{voteFeedback}</Text>
+            </View>
+          ) : null}
           <Pressable
-            onPress={() => navigation.navigate('InfluencerSearch')}
+            onPress={() => navigation.navigate('Monetization', { tab: 'register' })}
             style={({ pressed }) => [
               styles.registerCta,
               pressed && { opacity: 0.92 },
             ]}
           >
-            <Text style={styles.registerCtaText}>{t.registerInfluencer}</Text>
-            <Text style={styles.registerCtaHint}>{t.registerInfluencerHint}</Text>
+            <Text style={styles.registerCtaText}>{strings.registerInfluencer}</Text>
+            <Text style={styles.registerCtaHint}>{strings.registerInfluencerHint}</Text>
           </Pressable>
         </View>
 
@@ -315,18 +361,18 @@ export default function InfluencersListScreen() {
               onPress={() => loadData()}
               style={({ pressed }) => [styles.retryBtn, pressed && { opacity: 0.9 }]}
             >
-              <Text style={styles.retryBtnText}>{t.retry}</Text>
+              <Text style={styles.retryBtnText}>{strings.retry}</Text>
             </Pressable>
           </View>
         ) : null}
 
         {loading ? (
           <View style={styles.loadingRow}>
-            <ActivityIndicator color={GREEN} />
-            <Text style={styles.loadingText}>{t.loading}</Text>
+            <ActivityIndicator color={brand} />
+            <Text style={styles.loadingText}>{strings.loading}</Text>
           </View>
         ) : influencers.length === 0 ? (
-          <Text style={styles.emptyText}>{t.empty}</Text>
+          <Text style={styles.emptyText}>{strings.empty}</Text>
         ) : (
           <View style={styles.masonryRow}>
             <View style={styles.column}>{left.map(renderFeedItem)}</View>
@@ -351,7 +397,6 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
   },
   hero: {
-    backgroundColor: GREEN,
     borderRadius: 20,
     padding: 16,
     marginBottom: 12,
@@ -382,6 +427,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: 'rgba(255,255,255,0.75)',
     marginTop: 8,
+  },
+  heroVotesSummary: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.95)',
+    marginTop: 10,
+    fontWeight: '600',
+  },
+  voteFeedbackBox: {
+    marginTop: 10,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.35)',
+  },
+  voteFeedbackText: {
+    fontSize: 12,
+    color: '#fff',
+    fontWeight: '600',
   },
   registerCta: {
     marginTop: 14,
@@ -471,26 +536,5 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#fff',
-  },
-  voteBtn: {
-    marginTop: 8,
-    borderRadius: 999,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    alignItems: 'center',
-  },
-  voteBtnOn: {
-    backgroundColor: GREEN,
-  },
-  voteBtnOff: {
-    backgroundColor: '#e5e7eb',
-  },
-  voteBtnText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  voteBtnTextOn: {
-    color: '#fff',
   },
 });

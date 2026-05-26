@@ -10,6 +10,7 @@ import React, {
 import { Modal, View, ScrollView } from 'react-native';
 import { Box, Text, Button, ButtonText, VStack, HStack } from '@gluestack-ui/themed';
 import { useSettings } from './SettingsContext';
+import { useBrandTheme } from '../theme/useBrandTheme';
 import {
   getWalletDisclosuresAck,
   setWalletDisclosuresAck,
@@ -37,6 +38,7 @@ export function useWalletDisclosure(): WalletDisclosureContextValue {
 
 export function WalletDisclosureProvider({ children }: { children: React.ReactNode }) {
   const { language } = useSettings();
+  const { brand } = useBrandTheme();
   const lang = language === 'es' ? 'es' : 'en';
   const ui = WALLET_DISCLOSURE_UI[lang];
 
@@ -130,7 +132,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
                 </Text>
               </VStack>
               <VStack space="xs">
-                <Text fontSize="$xs" color="#00704A" fontWeight="$semibold">
+                <Text fontSize="$xs" color={brand} fontWeight="$semibold">
                   {ui.stepIndicator(step + 1, WALLET_DISCLOSURE_STEPS.length)}
                 </Text>
                 <Text fontSize="$xs" color="$textLight500">
@@ -140,7 +142,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
               <ScrollView style={{ maxHeight: 360 }} showsVerticalScrollIndicator>
                 <VStack space="md">
                   <Box>
-                    <Text fontSize="$xs" fontWeight="$semibold" color="#00704A" mb="$1">
+                    <Text fontSize="$xs" fontWeight="$semibold" color={brand} mb="$1">
                       {ui.langLabelEs}
                     </Text>
                     <Text fontSize="$lg" fontWeight="$bold" color="$textLight900" mb="$2">
@@ -152,7 +154,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
                   </Box>
                   <Box h={1} bg="$borderLight200" my="$1" />
                   <Box>
-                    <Text fontSize="$xs" fontWeight="$semibold" color="#00704A" mb="$1">
+                    <Text fontSize="$xs" fontWeight="$semibold" color={brand} mb="$1">
                       {ui.langLabelEn}
                     </Text>
                     <Text fontSize="$lg" fontWeight="$bold" color="$textLight900" mb="$2">
@@ -174,7 +176,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
                     <ButtonText>{ui.back}</ButtonText>
                   </Button>
                 )}
-                <Button size="sm" bg="#00704A" onPress={isLast ? completeFullFlow : () => setStep((s) => s + 1)}>
+                <Button size="sm" bg={brand} onPress={isLast ? completeFullFlow : () => setStep((s) => s + 1)}>
                   <ButtonText color="$white">{isLast ? ui.accept : ui.next}</ButtonText>
                 </Button>
               </HStack>
@@ -187,7 +189,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'center', padding: 20 }}>
           <Box bg="$white" borderRadius="$xl" p="$5" maxHeight="88%" borderWidth={1} borderColor="$borderLight200">
             <VStack space="xs" mb="$3">
-              <Text fontSize="$lg" fontWeight="$bold" color="#00704A">
+              <Text fontSize="$lg" fontWeight="$bold" color={brand}>
                 {ui.reminderTitle}
               </Text>
               <Text fontSize="$sm" fontWeight="$semibold" color="$textLight600">
@@ -197,7 +199,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
             <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator>
               <VStack space="md" mb="$4">
                 <Box>
-                  <Text fontSize="$xs" fontWeight="$semibold" color="#00704A" mb="$2">
+                  <Text fontSize="$xs" fontWeight="$semibold" color={brand} mb="$2">
                     {ui.langLabelEs}
                   </Text>
                   <VStack space="sm">
@@ -215,7 +217,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
                 </Box>
                 <Box h={1} bg="$borderLight200" />
                 <Box>
-                  <Text fontSize="$xs" fontWeight="$semibold" color="#00704A" mb="$2">
+                  <Text fontSize="$xs" fontWeight="$semibold" color={brand} mb="$2">
                     {ui.langLabelEn}
                   </Text>
                   <VStack space="sm">
@@ -233,7 +235,7 @@ export function WalletDisclosureProvider({ children }: { children: React.ReactNo
                 </Box>
               </VStack>
             </ScrollView>
-            <Button size="sm" bg="#00704A" alignSelf="flex-end" onPress={dismissReminder}>
+            <Button size="sm" bg={brand} alignSelf="flex-end" onPress={dismissReminder}>
               <ButtonText color="$white">{ui.reminderOk}</ButtonText>
             </Button>
           </Box>
