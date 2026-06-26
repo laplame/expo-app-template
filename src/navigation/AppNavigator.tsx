@@ -10,14 +10,20 @@ import WalletScreen from '../screens/WalletScreen';
 import NYCScreen from '../screens/NYCScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import PromotionsMapScreen from '../screens/PromotionsMapScreen';
-import UploadPromotionsScreen from '../screens/UploadPromotionsScreen';
+import UploadPromotionsScreenGate from '../screens/UploadPromotionsScreenGate';
 import QuickRegisterScreen from '../screens/QuickRegisterScreen';
 import DefiDealScreen from '../screens/DefiDealScreen';
 import MallOrderScreen from '../screens/MallOrderScreen';
 import MonetizationScreen from '../screens/MonetizationScreen';
+import InfluencerSearchScreen from '../screens/InfluencerSearchScreen';
 import InfluencersListScreen from '../screens/InfluencersListScreen';
 import NetworkP2PScreen from '../screens/NetworkP2PScreen';
 import EmailDexScreen from '../screens/EmailDexScreen';
+import LoginScreen from '../screens/LoginScreen';
+import UserDashboardScreen from '../screens/UserDashboardScreen';
+import InfluencerDashboardScreen from '../screens/InfluencerDashboardScreen';
+import BusinessDashboardScreen from '../screens/BusinessDashboardScreen';
+import SuperuserDashboardScreen from '../screens/SuperuserDashboardScreen';
 import CustomDrawerContent from '../components/CustomDrawerContent';
 import type { InfluencerPlatform } from '../services/influencersApi';
 
@@ -32,8 +38,8 @@ export type RootStackParamList = {
   QuickRegister: undefined;
   DefiDeal: undefined;
   MallOrder: undefined;
-  Monetization: {
-    tab?: 'panel' | 'register';
+  Monetization: undefined;
+  InfluencerSearch: {
     initialQuery?: string;
     platform?: InfluencerPlatform;
     imageUri?: string;
@@ -41,6 +47,11 @@ export type RootStackParamList = {
   InfluencersList: undefined;
   NetworkP2P: undefined;
   EmailDex: undefined;
+  Login: undefined;
+  UserDashboard: undefined;
+  InfluencerDashboard: undefined;
+  BusinessDashboard: undefined;
+  SuperuserDashboard: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -101,7 +112,7 @@ function StackNavigator() {
       />
       <Stack.Screen 
         name="UploadPromotions" 
-        component={UploadPromotionsScreen}
+        component={UploadPromotionsScreenGate}
         options={{ title: 'Upload promotion' }}
       />
       <Stack.Screen 
@@ -126,6 +137,13 @@ function StackNavigator() {
           title: language === 'es' ? 'Monetización' : 'Monetization',
         }}
       />
+      <Stack.Screen
+        name="InfluencerSearch"
+        component={InfluencerSearchScreen}
+        options={{
+          title: language === 'es' ? 'Buscar influencer' : 'Search influencer',
+        }}
+      />
       <Stack.Screen 
         name="InfluencersList" 
         component={InfluencersListScreen}
@@ -145,6 +163,41 @@ function StackNavigator() {
         options={{
           headerShown: false,
           title: 'E-mailDex',
+        }}
+      />
+      <Stack.Screen
+        name="Login"
+        component={LoginScreen}
+        options={{
+          title: language === 'es' ? 'Iniciar sesión' : 'Sign in',
+        }}
+      />
+      <Stack.Screen
+        name="UserDashboard"
+        component={UserDashboardScreen}
+        options={{
+          title: language === 'es' ? 'Panel usuario' : 'User panel',
+        }}
+      />
+      <Stack.Screen
+        name="InfluencerDashboard"
+        component={InfluencerDashboardScreen}
+        options={{
+          title: language === 'es' ? 'Panel influencer' : 'Influencer panel',
+        }}
+      />
+      <Stack.Screen
+        name="BusinessDashboard"
+        component={BusinessDashboardScreen}
+        options={{
+          title: language === 'es' ? 'Panel negocio' : 'Business panel',
+        }}
+      />
+      <Stack.Screen
+        name="SuperuserDashboard"
+        component={SuperuserDashboardScreen}
+        options={{
+          title: language === 'es' ? 'Panel superusuario' : 'Superuser panel',
         }}
       />
     </Stack.Navigator>

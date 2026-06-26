@@ -1,7 +1,7 @@
 /**
  * Pantalla para crear promociones.
- * Ref: assets/docs/upload_promo.md
- * Si falta algo (error, validación), se ofrece redirigir al sitio web.
+ * Ref: docs/APP_CREAR_PROMOCION_IA.md (flujo foto → Gemini → form → POST)
+ * Sin deal: docs/PROMOCIONES_SIN_DEAL_API_BACKEND.md
  */
 import React, { useEffect, useState, useMemo } from 'react';
 import { ScrollView, Alert, Linking, Platform, ActionSheetIOS, Pressable as RNPressable, Image, Switch, ActivityIndicator } from 'react-native';
@@ -45,6 +45,9 @@ import {
 import { hasBasicRegistration } from '../services/storage';
 import { logPromotionDebug, logPromotionWarn } from '../utils/uploadPromotionLog';
 import { useBrandTheme } from '../theme/useBrandTheme';
+import UploadPromotionDealChoiceModal, {
+  type PromotionUploadDealMode,
+} from '../components/UploadPromotionDealChoiceModal';
 
 function formatDateYMD(d: Date): string {
   const y = d.getFullYear();
@@ -114,6 +117,8 @@ export default function UploadPromotionsScreen() {
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<{ uri: string; name?: string; type?: string }[]>([]);
+  /** null = mostrar modal inicial; sin_deal = formulario app; con_deal = redirigir a web */
+  const [uploadDealMode, setUploadDealMode] = useState<PromotionUploadDealMode | null>(null);
 
   const today = useMemo(() => new Date(), []);
   const defaultUntil = useMemo(() => {
@@ -284,6 +289,15 @@ export default function UploadPromotionsScreen() {
       offerBogo: language === 'es' ? '2x1 (BOGO)' : 'BOGO',
       offerCbFixed: language === 'es' ? 'Cashback fijo' : 'Fixed cashback',
       offerCbPct: language === 'es' ? 'Cashback % sobre oferta' : 'Cashback % on deal',
+      dealChoiceConDealTitle: language === 'es' ? 'Promoción con deal' : 'Promotion with deal',
+      dealChoiceConDealBody:
+        language === 'es'
+          ? 'Las promociones con deal (cupón, comisión, influencers) se crean en DameCodigo.com.'
+          : 'Deal promotions (coupons, commission, influencers) are created on DameCodigo.com.',
+      dealChoiceOpenWeb: language === 'es' ? 'Abrir en la web' : 'Open on web',
+      dealChoiceChangeType: language === 'es' ? 'Elegir otro tipo' : 'Choose another type',
+      dealChoiceSinDealBadge:
+        language === 'es' ? 'Sin deal · verificación' : 'No deal · verification',
     }),
     [language]
   );
@@ -311,11 +325,36 @@ export default function UploadPromotionsScreen() {
     Linking.openURL(SITE_PROMO_URLS.quickPromotion).catch(() => {});
   };
 
-  /** Mapeo data Gemini → formulario (upload_promo.md §5, Quick promotion) */
+  const openWebWithDeal = () => {
+    Linking.openURL(SITE_PROMO_URLS.promotionWithDeal).catch(() => {});
+  };
+
+  const handleDealModeSelect = (mode: PromotionUploadDealMode) => {
+    setUploadDealMode(mode);
+    if (mode === 'con_deal') {
+      void openWebWithDeal();
+    }
+  };
+
+  /** Mapeo data Gemini → formulario (APP_CREAR_PROMOCION_IA.md §5, Quick promotion) */
   const applyAnalyzeData = (d: AnalyzeImageData) => {
     const validCategories = CATEGORIES;
     const validOfferTypes = ['percentage', 'bogo', 'cashback_fixed', 'cashback_percentage'];
     const offer = validOfferTypes.includes(d.offerType ?? '') ? (d.offerType as string) : 'percentage';
+    let originalPrice =
+      d.originalPrice != null ? String(d.originalPrice) : undefined;
+    let currentPrice =
+      d.currentPrice != null ? String(d.currentPrice) : undefined;
+    if (
+      (originalPrice == null || currentPrice == null) &&
+      d.discountPercentage != null &&
+      d.originalPrice != null &&
+      Number.isFinite(d.originalPrice)
+    ) {
+      const pct = Math.min(100, Math.max(0, d.discountPercentage));
+      originalPrice = String(d.originalPrice);
+      currentPrice = String(Math.round(d.originalPrice * (1 - pct / 100) * 100) / 100);
+    }
     setForm((f) => ({
       ...f,
       title: (d.title ?? f.title).trim() || f.title,
@@ -323,13 +362,50 @@ export default function UploadPromotionsScreen() {
       productName: d.productName ?? f.productName,
       brand: d.brand ?? f.brand,
       category: validCategories.includes(d.category ?? '') ? (d.category as string) : f.category,
-      originalPrice: d.originalPrice != null ? String(d.originalPrice) : f.originalPrice,
-      currentPrice: d.currentPrice != null ? String(d.currentPrice) : f.currentPrice,
+      originalPrice: originalPrice ?? f.originalPrice,
+      currentPrice: currentPrice ?? f.currentPrice,
       offerType: offer,
       cashbackValue: d.cashbackValue != null ? String(d.cashbackValue) : f.cashbackValue,
       termsAndConditions: d.termsAndConditions ?? f.termsAndConditions,
+      /** Gemini devuelve precios en USD (§6). */
+      promoCurrency: 'USD',
     }));
     setPricesFromIa(true);
+  };
+
+  const handlePromoCurrencyChange = (next: 'USD' | 'MXN') => {
+    setForm((f) => {
+      if (f.promoCurrency === next) return f;
+      if (!pricesFromIa) return { ...f, promoCurrency: next };
+      const orig = parseFloat(String(f.originalPrice).replace(',', '.'));
+      const curr = parseFloat(String(f.currentPrice).replace(',', '.'));
+      if (f.promoCurrency === 'USD' && next === 'MXN') {
+        return {
+          ...f,
+          promoCurrency: next,
+          originalPrice: Number.isFinite(orig)
+            ? String(Math.round(orig * USD_TO_MXN * 100) / 100)
+            : f.originalPrice,
+          currentPrice: Number.isFinite(curr)
+            ? String(Math.round(curr * USD_TO_MXN * 100) / 100)
+            : f.currentPrice,
+        };
+      }
+      if (f.promoCurrency === 'MXN' && next === 'USD') {
+        return {
+          ...f,
+          promoCurrency: next,
+          originalPrice: Number.isFinite(orig)
+            ? String(Math.round((orig / USD_TO_MXN) * 100) / 100)
+            : f.originalPrice,
+          currentPrice: Number.isFinite(curr)
+            ? String(Math.round((curr / USD_TO_MXN) * 100) / 100)
+            : f.currentPrice,
+        };
+      }
+      return { ...f, promoCurrency: next };
+    });
+    if (next === 'MXN') setPricesFromIa(false);
   };
 
   const runAnalyze = async (imgs: { uri: string; name?: string; type?: string }[]) => {
@@ -461,8 +537,9 @@ export default function UploadPromotionsScreen() {
     const discount =
       orig > 0 ? Math.round(((orig - curr) / orig) * 100) : 0;
 
+    const isSinDeal = uploadDealMode === 'sin_deal';
     const gpsOn = !!currentForm.gpsActivation;
-    const isRedirectMode = currentForm.promotionMode === 'redirect';
+    const isRedirectMode = !isSinDeal && currentForm.promotionMode === 'redirect';
     if (gpsOn && isRedirectMode) {
       setError(t.gpsQrOnlyError);
       return null;
@@ -516,6 +593,16 @@ export default function UploadPromotionsScreen() {
     const redemptionType = isRedirectMode ? 'online_redirect' : 'in_store_qr';
     const fulfillmentType = isRedirectMode ? 'online' : 'physical_store';
 
+    const sinDealFields = isSinDeal
+      ? {
+          hasDeal: false as const,
+          promotionKind: 'verification_only' as const,
+          ecosystemNative: false as const,
+          hasContract: false as const,
+          sourceChannel: 'mobile_app' as const,
+        }
+      : {};
+
     return {
       title,
       description: description || undefined,
@@ -536,12 +623,12 @@ export default function UploadPromotionsScreen() {
       validUntil,
       /** Recibida en servidor; visible en listados públicos tras revisión (draft / moderación). */
       status: 'draft',
-      gpsActivationEnabled: gpsOn,
-      locationRadiusMeters,
-      redemptionType,
-      fulfillmentType,
+      gpsActivationEnabled: isSinDeal ? false : gpsOn,
+      locationRadiusMeters: isSinDeal ? undefined : locationRadiusMeters,
+      redemptionType: isSinDeal ? undefined : redemptionType,
+      fulfillmentType: isSinDeal ? 'physical_store' : fulfillmentType,
       geoRedemption:
-        gpsOn && coordinates && locationRadiusMeters != null
+        !isSinDeal && gpsOn && coordinates && locationRadiusMeters != null
           ? {
               enabled: true,
               coordinates,
@@ -554,6 +641,7 @@ export default function UploadPromotionsScreen() {
         isRedirectMode
           ? (currentForm.redirectToUrl ?? '').trim() || undefined
           : undefined,
+      ...sinDealFields,
     };
   };
 
@@ -703,9 +791,49 @@ export default function UploadPromotionsScreen() {
     setForm((f) => ({ ...f, category: key }));
   };
 
+  if (uploadDealMode === 'con_deal') {
+    return (
+      <Box flex={1} bg="$white">
+        <StatusBar style="dark" />
+        <ScrollView
+          contentContainerStyle={{ padding: 20, paddingBottom: 80, flexGrow: 1, justifyContent: 'center' }}
+        >
+          <VStack space="lg" alignItems="center">
+            <Box bg={brand} borderRadius="$xl" p="$5" width="100%">
+              <Text fontSize="$xl" fontWeight="$bold" color="$white">
+                {t.dealChoiceConDealTitle}
+              </Text>
+              <Text fontSize="$sm" color="$white" opacity={0.92} mt="$2" lineHeight="$md">
+                {t.dealChoiceConDealBody}
+              </Text>
+            </Box>
+            <Button size="lg" bg={brand} width="100%" onPress={openWebWithDeal}>
+              <ButtonText>{t.dealChoiceOpenWeb}</ButtonText>
+            </Button>
+            <Button
+              size="md"
+              variant="outline"
+              borderColor={brand}
+              width="100%"
+              onPress={() => setUploadDealMode(null)}
+            >
+              <ButtonText color={brand}>{t.dealChoiceChangeType}</ButtonText>
+            </Button>
+          </VStack>
+        </ScrollView>
+      </Box>
+    );
+  }
+
   return (
     <Box flex={1} bg="$white">
       <StatusBar style="dark" />
+      <UploadPromotionDealChoiceModal
+        visible={uploadDealMode === null}
+        language={language}
+        brand={brand}
+        onSelect={handleDealModeSelect}
+      />
       <ScrollView
         contentContainerStyle={{ padding: 20, paddingBottom: 80, flexGrow: 1 }}
         keyboardShouldPersistTaps="handled"
@@ -720,6 +848,11 @@ export default function UploadPromotionsScreen() {
                 <Text fontSize="$sm" color="$white" opacity={0.9} mt="$1">
                   {t.subtitle}
                 </Text>
+                {uploadDealMode === 'sin_deal' ? (
+                  <Text fontSize="$2xs" color="$white" opacity={0.85} mt="$2" fontWeight="$semibold">
+                    {t.dealChoiceSinDealBadge}
+                  </Text>
+                ) : null}
               </VStack>
               <Button size="xs" variant="link" onPress={openWebForm}>
                 <ButtonText color="$white" fontSize="$sm" textDecorationLine="underline">{t.advancedMode}</ButtonText>
@@ -774,6 +907,12 @@ export default function UploadPromotionsScreen() {
                 ))}
               </HStack>
             )}
+            {analyzing ? (
+              <HStack space="sm" alignItems="center" mt="$2">
+                <ActivityIndicator color={brand} />
+                <Text fontSize="$sm" color="$textLight600">{t.analyzing}</Text>
+              </HStack>
+            ) : null}
             {images.length >= 1 && images.length <= 5 && (
               <Button size="sm" variant="outline" onPress={() => runAnalyze(images)} isDisabled={analyzing}>
                 <ButtonText>{analyzing ? t.analyzing : `🤖 ${t.reAnalyze}`}</ButtonText>
@@ -796,7 +935,8 @@ export default function UploadPromotionsScreen() {
               <Text fontSize="$sm" color="$textLight600">{t.step2Subtitle}</Text>
             </VStack>
 
-            {/* Tipo de promoción: QR vs redirección (como en web) */}
+            {/* Tipo de promoción: QR vs redirección (oculto en sin deal: sin cupón ni redirect) */}
+            {uploadDealMode !== 'sin_deal' ? (
             <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="$backgroundLight50">
               <HStack space="sm" alignItems="center" mb="$2">
                 <Text fontSize="$lg">🏷️</Text>
@@ -858,6 +998,13 @@ export default function UploadPromotionsScreen() {
                 </FormControl>
               ) : null}
             </Box>
+            ) : (
+              <Text fontSize="$xs" color="$textLight600">
+                {language === 'es'
+                  ? 'Verificación sin deal: no hay cupón QR ni enlace de redirección.'
+                  : 'No-deal verification: no QR coupon or redirect link.'}
+              </Text>
+            )}
 
             {/* Precios + descuento */}
             <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="$white">
@@ -875,7 +1022,7 @@ export default function UploadPromotionsScreen() {
                   {(['USD', 'MXN'] as const).map((c) => (
                     <Pressable
                       key={c}
-                      onPress={() => setForm((f) => ({ ...f, promoCurrency: c }))}
+                      onPress={() => handlePromoCurrencyChange(c)}
                       flex={1}
                       borderWidth={2}
                       borderColor={form.promoCurrency === c ? brand : '$borderLight300'}
@@ -1049,6 +1196,7 @@ export default function UploadPromotionsScreen() {
             <Input><InputField value={form.country} onChangeText={(v) => setForm((f) => ({ ...f, country: v }))} placeholder={t.fieldCountry} /></Input>
           </FormControl>
 
+          {uploadDealMode !== 'sin_deal' ? (
           <Box borderWidth={1} borderColor="$borderLight300" borderRadius="$lg" p="$4" bg="$backgroundLight50">
             <HStack justifyContent="space-between" alignItems="center" mb="$2" space="md">
               <Text fontSize="$md" fontWeight="$semibold" color="$textLight900" flex={1}>
@@ -1126,6 +1274,7 @@ export default function UploadPromotionsScreen() {
               </VStack>
             ) : null}
           </Box>
+          ) : null}
 
           <FormControl>
             <FormControlLabel><FormControlLabelText>{t.fieldValidFrom}</FormControlLabelText></FormControlLabel>

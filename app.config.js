@@ -23,6 +23,7 @@ module.exports = {
     version,
     plugins: [
       'expo-secure-store',
+      'expo-web-browser',
       [
         'expo-camera',
         {

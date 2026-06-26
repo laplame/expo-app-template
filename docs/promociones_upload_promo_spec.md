@@ -10,6 +10,9 @@ La implementacion actual esta en:
 - `src/screens/UploadPromotionsScreen.tsx`
 - `src/services/promotionsApi.ts`
 
+Referencia detallada del flujo con IA (Gemini): [APP_CREAR_PROMOCION_IA.md](./APP_CREAR_PROMOCION_IA.md).  
+Promociones sin deal: [PROMOCIONES_SIN_DEAL_API_BACKEND.md](./PROMOCIONES_SIN_DEAL_API_BACKEND.md).
+
 ## Base URL
 
 La app usa:

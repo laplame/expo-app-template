@@ -23,6 +23,7 @@ import { useSettings } from '../context/SettingsContext';
 import { useBrandTheme } from '../theme/useBrandTheme';
 import InfluencerCard from '../components/InfluencerCard';
 import PromotionCard from '../components/PromotionCard';
+import InfluencerSearchBar from '../components/InfluencerSearchBar';
 import { getAllInfluencers, type InfluencerDoc } from '../services/influencersApi';
 import {
   getPromotions,
@@ -342,16 +343,10 @@ export default function InfluencersListScreen() {
               <Text style={styles.voteFeedbackText}>{voteFeedback}</Text>
             </View>
           ) : null}
-          <Pressable
-            onPress={() => navigation.navigate('Monetization', { tab: 'register' })}
-            style={({ pressed }) => [
-              styles.registerCta,
-              pressed && { opacity: 0.92 },
-            ]}
-          >
-            <Text style={styles.registerCtaText}>{strings.registerInfluencer}</Text>
-            <Text style={styles.registerCtaHint}>{strings.registerInfluencerHint}</Text>
-          </Pressable>
+        </View>
+
+        <View style={styles.searchBarWrap}>
+          <InfluencerSearchBar language={language} brand={brand} />
         </View>
 
         {error ? (
@@ -447,6 +442,9 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#fff',
     fontWeight: '600',
+  },
+  searchBarWrap: {
+    marginBottom: 12,
   },
   registerCta: {
     marginTop: 14,

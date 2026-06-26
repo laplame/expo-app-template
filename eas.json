@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 5.2.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -11,18 +11,29 @@
     },
     "preview": {
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://www.damecodigo.com/api",
+        "EXPO_PUBLIC_SITE_URL": "https://www.damecodigo.com",
+        "EXPO_PUBLIC_APP_ENV": "production"
+      },
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"
       }
     },
     "production": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://www.damecodigo.com/api",
+        "EXPO_PUBLIC_SITE_URL": "https://www.damecodigo.com",
+        "EXPO_PUBLIC_APP_ENV": "production"
+      },
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"
       }
     },
     "production-apk": {
+      "distribution": "internal",
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"

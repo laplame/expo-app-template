@@ -21,6 +21,8 @@ export const SITE_PROMO_URLS = {
   quickPromotion: `${SITE_BASE}/quick-promotion`,
   addPromotion: `${SITE_BASE}/add-promotion`,
   createPromotion: `${SITE_BASE}/create-promotion`,
+  /** Promociones con deal (wizard / comisión en web). */
+  promotionWithDeal: `${SITE_BASE}/create-promotion`,
   promotionDetail: (id: string) => `${SITE_BASE}/promotion-details/${id}`,
 } as const;
 
@@ -177,6 +179,12 @@ export interface PromotionPayload {
   fulfillmentType?: PromotionFulfillmentType;
   /** Estructura canónica para promociones geolocalizadas. Se envía junto a campos planos por compatibilidad. */
   geoRedemption?: PromotionGeoRedemption;
+  /** Sin deal / verificación de terceros (ref: PROMOCIONES_SIN_DEAL_API_BACKEND.md). */
+  hasDeal?: boolean;
+  promotionKind?: 'verification_only' | 'with_deal' | string;
+  ecosystemNative?: boolean;
+  hasContract?: boolean;
+  sourceChannel?: 'mobile_app' | 'web' | string;
 }
 
 export interface PromotionImage {
@@ -284,6 +292,11 @@ function promotionPayloadToJson(data: PromotionPayload): Record<string, unknown>
   if (data.redirectInsteadOfQr) body.redirectInsteadOfQr = true;
   if (data.redirectToUrl) body.redirectToUrl = data.redirectToUrl;
   if (data.status) body.status = data.status;
+  if (data.hasDeal === false) body.hasDeal = false;
+  if (data.promotionKind) body.promotionKind = data.promotionKind;
+  if (data.ecosystemNative === false) body.ecosystemNative = false;
+  if (data.hasContract === false) body.hasContract = false;
+  if (data.sourceChannel) body.sourceChannel = data.sourceChannel;
   return body;
 }
 
@@ -327,6 +340,11 @@ function buildPromotionFormData(data: PromotionPayload, images?: PromotionImage[
   if (data.redirectInsteadOfQr) formData.append('redirectInsteadOfQr', 'true');
   if (data.redirectToUrl) formData.append('redirectToUrl', data.redirectToUrl);
   if (data.status) formData.append('status', data.status);
+  if (data.hasDeal === false) formData.append('hasDeal', 'false');
+  if (data.promotionKind) formData.append('promotionKind', data.promotionKind);
+  if (data.ecosystemNative === false) formData.append('ecosystemNative', 'false');
+  if (data.hasContract === false) formData.append('hasContract', 'false');
+  if (data.sourceChannel) formData.append('sourceChannel', data.sourceChannel);
   if (images?.length) {
     images.forEach((img, i) => {
       formData.append('images', {

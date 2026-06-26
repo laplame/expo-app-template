@@ -1,63 +1,51 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Box, Text, VStack, Pressable, HStack } from '@gluestack-ui/themed';
 import { DrawerContentScrollView, DrawerContentComponentProps } from '@react-navigation/drawer';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { DRAWER_NAV_ITEMS, filterDrawerItems } from '../navigation/drawerNavConfig';
 import { useSettings } from '../context/SettingsContext';
+import { useAuth } from '../context/AuthContext';
 import { appVersion, appBuild, appTimestamp } from '../version';
 import AppMenuBackground from './AppMenuBackground';
 import { getAppTheme } from '../theme/appThemes';
-
-interface DrawerItem {
-  id: string;
-  titleEn: string;
-  titleEs: string;
-  screen: keyof RootStackParamList;
-  params?: any;
-  icon?: string;
-}
-
-const drawerItems: DrawerItem[] = [
-  { id: '1', titleEn: 'Home', titleEs: 'Inicio', screen: 'Home', icon: '🏠' },
-  { id: '1b', titleEn: 'Coupons', titleEs: 'Cupones', screen: 'Home', params: { scrollToPromotions: true }, icon: '🎟️' },
-  { id: '2', titleEn: 'Mall & Order', titleEs: 'Tienda · Pedir', screen: 'MallOrder', icon: '🛒' },
-  { id: '3', titleEn: 'Wallet', titleEs: 'Billetera', screen: 'Wallet', icon: '💳' },
-  { id: '4', titleEn: 'Defi.Deal', titleEs: 'Defi.Deal', screen: 'DefiDeal', icon: '📖' },
-  { id: '5', titleEn: 'Promotions map', titleEs: 'Mapa de promociones', screen: 'PromotionsMap', icon: '🗺️' },
-  { id: '6', titleEn: 'NYC (Know Your Client)', titleEs: 'NYC (Conoce a tu cliente)', screen: 'NYC', icon: '👤' },
-  { id: '7', titleEn: 'Upload promotion', titleEs: 'Subir promoción', screen: 'UploadPromotions', icon: '📤' },
-  { id: '8', titleEn: 'Influencers & Vote', titleEs: 'Influencers y votar', screen: 'InfluencersList', icon: '⭐' },
-  {
-    id: '8b',
-    titleEn: 'Monetization',
-    titleEs: 'Monetización',
-    screen: 'Monetization',
-    icon: '💰',
-  },
-  { id: '8p2p', titleEn: 'Social Layer', titleEs: 'Social Layer', screen: 'NetworkP2P', icon: '📡' },
-  { id: '9', titleEn: 'Settings', titleEs: 'Configuración', screen: 'Settings', icon: '⚙️' },
-];
+import { getRoleLabel } from '../types/authRoles';
 
 export default function CustomDrawerContent(props: DrawerContentComponentProps) {
   const { language, appTheme } = useSettings();
+  const { hasPermission, status, effectiveRole, user } = useAuth();
   const themeDef = getAppTheme(appTheme);
   const appName = language === 'es' ? 'damecodigo' : 'link4deal';
   const menuTitle = language === 'es' ? 'Menú' : 'Menu';
 
-  const handleNavigation = (screen: keyof RootStackParamList, params?: any) => {
-    // Close the drawer first
+  const drawerItems = useMemo(
+    () =>
+      filterDrawerItems(DRAWER_NAV_ITEMS, {
+        hasPermission,
+        isAuthenticated: status === 'authenticated',
+      }),
+    [hasPermission, status]
+  );
+
+  const handleNavigation = (screen: keyof RootStackParamList, params?: unknown) => {
     props.navigation.closeDrawer();
-    
-    // Navigate to MainStack with nested screen navigation
-    // Use the string-based navigation for nested screens
-    (props.navigation as any).navigate('MainStack', {
-      screen: screen,
-      params: params,
+    (props.navigation as { navigate: (a: string, b?: object) => void }).navigate('MainStack', {
+      screen,
+      params,
     });
   };
 
-  // Get current route to highlight active item
-  const currentRoute = props.state?.routes[props.state?.index || 0]?.name || 'Home';
-  const activeRoute = (props.state?.routes[props.state?.index || 0]?.state as any)?.routes?.[(props.state?.routes[props.state?.index || 0]?.state as any)?.index || 0]?.name || 'Home';
+  const activeRoute =
+    (props.state?.routes[props.state?.index || 0]?.state as { routes?: { name: string }[]; index?: number })
+      ?.routes?.[
+      (props.state?.routes[props.state?.index || 0]?.state as { index?: number })?.index || 0
+    ]?.name || 'Home';
+
+  const sessionLabel =
+    status === 'authenticated'
+      ? `${user?.email ?? user?.displayName ?? '—'} · ${getRoleLabel(effectiveRole, language)}`
+      : language === 'es'
+        ? 'Sin sesión'
+        : 'Not signed in';
 
   return (
     <Box flex={1}>
@@ -68,6 +56,9 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
           </Text>
           <Text fontSize="$sm" color="$white" opacity={0.9}>
             {menuTitle}
+          </Text>
+          <Text fontSize="$2xs" color="$white" opacity={0.75} mt="$1">
+            {sessionLabel}
           </Text>
         </VStack>
       </Box>
@@ -91,13 +82,7 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
                   borderColor={themeDef.brand}
                   bg={isActive ? 'rgba(255,255,255,0.82)' : 'rgba(255,255,255,0.55)'}
                 >
-                  <HStack
-                    space="md"
-                    alignItems="center"
-                    px="$4"
-                    py="$3"
-                    borderRadius="$md"
-                  >
+                  <HStack space="md" alignItems="center" px="$4" py="$3" borderRadius="$md">
                     {item.icon ? <Text fontSize="$xl">{item.icon}</Text> : null}
                     <Text
                       fontSize="$md"
@@ -113,13 +98,7 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
           </VStack>
         </DrawerContentScrollView>
 
-        <Box
-          px="$4"
-          py="$3"
-          borderTopWidth={1}
-          borderTopColor="rgba(0,0,0,0.08)"
-          bg="rgba(255,255,255,0.92)"
-        >
+        <Box px="$4" py="$3" borderTopWidth={1} borderTopColor="rgba(0,0,0,0.08)" bg="rgba(255,255,255,0.92)">
           <Text fontSize="$xs" color="$textLight500">
             v{appVersion} ({language === 'es' ? 'build' : 'build'} {appBuild})
           </Text>
@@ -134,4 +113,3 @@ export default function CustomDrawerContent(props: DrawerContentComponentProps) 
     </Box>
   );
 }
-

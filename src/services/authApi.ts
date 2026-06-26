@@ -22,8 +22,11 @@ export interface AuthUser {
   id: string;
   email?: string;
   phone?: string;
+  displayName?: string;
   primaryRole?: string;
   profileTypes?: string[];
+  isSuperuser?: boolean;
+  superuser?: boolean;
   [key: string]: unknown;
 }
 

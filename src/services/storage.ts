@@ -21,6 +21,8 @@ const KEYS = {
   INFLUENCER_VOTE_TALLIES: '@link4deal/influencer_vote_tallies',
   /** Caché del perfil influencer vinculado (GET /me) para el panel en app. */
   INFLUENCER_SESSION_CACHE: '@link4deal/influencer_session_cache',
+  /** Historial local de cupones QR emitidos por campaña (panel influencer). */
+  INFLUENCER_QR_ISSUE_HISTORY: '@link4deal/influencer_qr_issue_history',
   WALLET_DISCLOSURES_ACK: '@link4deal/wallet_disclosures_ack',
   PAYMENT_LIMIT_LUXAE: '@link4deal/payment_limit_luxae',
   /** Historial local LUXAE (ingresos, pagos, redenciones, fidelidad). */
@@ -550,6 +552,12 @@ export interface InfluencerSessionCache {
   influencerId?: string;
   publicSlug?: string;
   displayName?: string;
+  dashboardAccess?: boolean;
+  identityVerificationStatus?: 'pending' | 'approved' | 'rejected';
+  payoutWallet?: string;
+  preferredNetwork?: string;
+  pendingAmountUsd?: number;
+  paidAmountUsd?: number;
 }
 
 export async function getInfluencerSessionCache(): Promise<InfluencerSessionCache | null> {
@@ -570,6 +578,64 @@ export async function setInfluencerSessionCache(cache: InfluencerSessionCache | 
       return;
     }
     await AsyncStorage.setItem(KEYS.INFLUENCER_SESSION_CACHE, JSON.stringify(cache));
+  } catch {
+    // ignore
+  }
+}
+
+export interface InfluencerQrIssueRecord {
+  id: string;
+  shortCode: string;
+  campaignTitle?: string;
+  qrValue: string;
+  referralCode?: string;
+  createdAt: number;
+}
+
+const INFLUENCER_QR_HISTORY_MAX = 30;
+
+export async function getInfluencerQrIssueHistory(): Promise<InfluencerQrIssueRecord[]> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.INFLUENCER_QR_ISSUE_HISTORY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    const rows = parsed.filter((row): row is InfluencerQrIssueRecord => {
+      if (!row || typeof row !== 'object') return false;
+      const r = row as InfluencerQrIssueRecord;
+      return (
+        typeof r.id === 'string' &&
+        typeof r.shortCode === 'string' &&
+        typeof r.qrValue === 'string' &&
+        typeof r.createdAt === 'number' &&
+        Number.isFinite(r.createdAt)
+      );
+    });
+    rows.sort((a, b) => b.createdAt - a.createdAt);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+export async function appendInfluencerQrIssue(
+  entry: Omit<InfluencerQrIssueRecord, 'id' | 'createdAt'> & {
+    id?: string;
+    createdAt?: number;
+  }
+): Promise<void> {
+  try {
+    const prev = await getInfluencerQrIssueHistory();
+    const row: InfluencerQrIssueRecord = {
+      id: entry.id ?? `qr_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
+      shortCode: entry.shortCode.trim().replace(/^#/, ''),
+      campaignTitle: entry.campaignTitle?.trim() || undefined,
+      qrValue: entry.qrValue,
+      referralCode: entry.referralCode?.trim() || undefined,
+      createdAt: entry.createdAt ?? Date.now(),
+    };
+    const next = [row, ...prev.filter((p) => p.id !== row.id)].slice(0, INFLUENCER_QR_HISTORY_MAX);
+    await AsyncStorage.setItem(KEYS.INFLUENCER_QR_ISSUE_HISTORY, JSON.stringify(next));
   } catch {
     // ignore
   }

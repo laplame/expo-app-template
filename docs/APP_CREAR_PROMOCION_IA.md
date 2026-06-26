@@ -5,7 +5,8 @@ Documento para **verificar e implementar** el módulo de creación de promocione
 **Referencia en web:** `QuickPromotionPage` (`/quick-promotion`, `/add-promotion`) y `CreatePromotionWizard` (`/create-promotion`).  
 **Backend:** `server/services/geminiPromoAnalyzer.js`, `promotionController.analyzePromotionImage`, `POST /api/promotions`.
 
-**Copia en `docs/`:** [APP_CREAR_PROMOCION_IA.md](../../docs/APP_CREAR_PROMOCION_IA.md) (checklist de implementación móvil actualizado).
+**App móvil:** `src/screens/UploadPromotionsScreen.tsx`, `src/services/promotionsApi.ts`  
+**Sin deal / verificación terceros:** [PROMOCIONES_SIN_DEAL_API_BACKEND.md](./PROMOCIONES_SIN_DEAL_API_BACKEND.md)
 
 ---
 
@@ -116,7 +117,7 @@ El modelo está instruido a devolver **solo JSON** con esta forma (el servidor n
 | `category` | string | Uno de: `electronics`, `fashion`, `home`, `beauty`, `sports`, `books`, `food`, `other`. Si no coincide → backend fuerza `other`. |
 | `originalPrice` | number | **En USD** según el prompt de Gemini (convierte MXN/EUR aprox.). |
 | `currentPrice` | number | **En USD** (precio oferta). |
-| `discountPercentage` | number | 0–100. |
+| `discountPercentage` | number | 0–100; la app puede derivar `currentPrice` si falta. |
 | `offerType` | string | `percentage` \| `bogo` \| `cashback_fixed` \| `cashback_percentage`. Si no es válido → `percentage`. |
 | `cashbackValue` | number \| null | Relevante si `offerType` es cashback. |
 | `termsAndConditions` | string | Texto legal si aparece en la imagen; si no, `""`. |
@@ -144,6 +145,7 @@ Tras `analyze-image`, actualizar el estado del formulario así:
 | `offerType` | `d.offerType` | Solo si está en la lista permitida. |
 | `cashbackValue` | `d.cashbackValue` | Si es número; si no, 0 o valor previo. |
 | `termsAndConditions` | `d.termsAndConditions` | string. |
+| `promoCurrency` | fijar `USD` tras IA | §6; conversión explícita a MXN en UI. |
 
 **Imágenes:** el análisis **no** devuelve binarios; la app debe **conservar los mismos `File`/URI locales** usados en el `analyze-image` y enviarlos de nuevo en `POST /api/promotions`.
 
@@ -289,4 +291,31 @@ En quick-promotion la web permite:
 
 ## Anexo – Checklist de implementación móvil
 
-Ver checklist actualizado en [docs/APP_CREAR_PROMOCION_IA.md](../../docs/APP_CREAR_PROMOCION_IA.md#anexo--checklist-de-implementación-móvil).
+Estado en repo (mayo 2026):
+
+- [x] Subida multi-imagen (máx. 5), campo `images` — `UploadPromotionsScreen` + `analyzePromotionImage`.
+- [x] Llamada `analyze-image` al subir; indicador de carga + botón «Volver a analizar».
+- [x] Mapeo §4–§5; enums `category` / `offerType`; `promoCurrency: USD` tras IA.
+- [x] Aviso UI «precios IA en USD»; conversión USD↔MXN al cambiar moneda.
+- [x] Mismas URIs locales hasta `POST /api/promotions`.
+- [x] `POST` con `title` obligatorio; FormData + campos.
+- [x] Tras `201`, enlace a `SITE_PROMO_URLS.promotionDetail(id)` si no es `draft` simulado.
+- [x] Modal **Sin deal / Con deal**; sin deal envía `hasDeal=false`, `promotionKind=verification_only` (pendiente soporte backend P0).
+- [ ] Sin deal: umbrales de confianza en mapa/home — ver [PROMOCIONES_SIN_DEAL_API_BACKEND.md](./PROMOCIONES_SIN_DEAL_API_BACKEND.md).
+
+---
+
+## 12. Variante sin deal (app)
+
+Tras elegir **Sin deal** en el modal inicial:
+
+| Comportamiento app | Detalle |
+|--------------------|---------|
+| Sin cupón QR / redirect | Oculta selector QR vs enlace; `redirectInsteadOfQr: false`. |
+| Sin GPS para cupón | Oculta activación GPS de canje (ubicación de tienda sigue en campos texto). |
+| Payload extra | `hasDeal=false`, `promotionKind=verification_only`, `ecosystemNative=false`, `hasContract=false`, `sourceChannel=mobile_app`. |
+| Con deal | Redirige a `/create-promotion` en web. |
+
+---
+
+*Copia canónica también en `assets/docs/upload_promo.md`.*

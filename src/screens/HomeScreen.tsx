@@ -61,22 +61,12 @@ import {
   COFFEE_THRESHOLD,
 } from '../services/loyaltyApi';
 import { useFocusEffect } from '@react-navigation/native';
-import * as ImagePicker from 'expo-image-picker';
 import { getOrCreateDeviceId } from '../services/deviceIdentity';
 import { createDiscountQrToken, redeemDiscountQrToken } from '../services/discountQrApi';
 import { pickDefaultWalletAddress } from '../utils/walletQr';
 import { formatAddressForUi } from '../utils/addressDisplay';
 import AddressPayReceiveModal from '../components/AddressPayReceiveModal';
 import { getStoresNearUser, CDMX_CENTER } from '../data/nearbyStores';
-
-export type InfluencerPlatform = 'youtube' | 'tiktok' | 'instagram';
-
-
-const PLATFORM_OPTIONS: { id: InfluencerPlatform; label: string; short: string; selectedBg: string }[] = [
-  { id: 'youtube', label: 'YouTube', short: 'YT', selectedBg: '#FF0000' },
-  { id: 'tiktok', label: 'TikTok', short: 'TikTok', selectedBg: '#000000' },
-  { id: 'instagram', label: 'Instagram', short: 'IG', selectedBg: '#E4405F' },
-];
 
 function getIndexTranslations(language: 'en' | 'es') {
   if (language === 'es') {
@@ -134,14 +124,6 @@ function getIndexTranslations(language: 'en' | 'es') {
       ok: 'Aceptar',
       statusSynced: 'Estado sincronizado',
       statusSyncedMessage: 'Tu energía cafetera de la semana es increíble. Tienes un cupón extra para compartir.',
-      searchInfluencers: 'Buscar influencers...',
-      searchInfluencersByPlatform: 'Influencers en',
-      searchEmpty: 'Escribe un nombre o tema para buscar',
-      openingSearch: 'Abriendo búsqueda en',
-      uploadScreenshot: 'Subir screenshot',
-      screenshotSuggestion: 'Sube aquí tu screenshot del influencer, ¡qué quieres ver si tiene cupones activos!',
-      screenshotPermission: 'Se necesita permiso para acceder a las fotos.',
-      openGallery: 'Subir',
       cancel: 'Cancelar',
       qrGenerating: 'Generando cupón...',
       qrOneTime: 'Este cupón se puede redimir una sola vez.',
@@ -249,14 +231,6 @@ function getIndexTranslations(language: 'en' | 'es') {
     geoTooFar: (d: number, r: number) =>
       `You are ${Math.round(d)} m from the point. You must be within ${r} m for this coupon.`,
     geoLocationError: 'Could not read your location. Try again.',
-    searchInfluencers: 'Search influencers...',
-    searchInfluencersByPlatform: 'Influencers on',
-    searchEmpty: 'Enter a name or topic to search',
-    openingSearch: 'Opening search on',
-    uploadScreenshot: 'Upload screenshot',
-    screenshotSuggestion: 'Upload here your influencer screenshot to see if they have active coupons!',
-    screenshotPermission: 'Permission to access photos is required.',
-    openGallery: 'Upload',
     cancel: 'Cancel',
     qrGenerating: 'Generating coupon...',
     qrOneTime: 'This coupon can be redeemed only once.',
@@ -365,57 +339,10 @@ export default function HomeScreen() {
   const [showCoffeeQRModal, setShowCoffeeQRModal] = useState(false);
   const [kycPercent, setKycPercent] = useState(0);
   const [preferredMall, setPreferredMall] = useState<PreferredMall | null>(null);
-  const [influencerPlatform, setInfluencerPlatform] = useState<InfluencerPlatform>('youtube');
-  const [influencerSearchQuery, setInfluencerSearchQuery] = useState('');
   const [showUserQRModal, setShowUserQRModal] = useState(false);
   const [homeWalletAddress, setHomeWalletAddress] = useState<string | null>(null);
 
   const t = useMemo(() => getIndexTranslations(language), [language]);
-
-  const openScreenshotPicker = async () => {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert(t.ok, t.screenshotPermission);
-      return;
-    }
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: (ImagePicker as any).MediaTypeOptions?.Images ?? ['images'],
-      allowsEditing: false,
-      quality: 0.8,
-    });
-    if (!result.canceled && result.assets?.[0]) {
-      const uri = result.assets[0].uri;
-      (navigation as any).navigate('Monetization', {
-        tab: 'register',
-        imageUri: uri,
-        platform: influencerPlatform,
-      });
-    }
-  };
-
-  const pickScreenshot = () => {
-    Alert.alert(
-      t.uploadScreenshot,
-      t.screenshotSuggestion,
-      [
-        { text: t.cancel, style: 'cancel' },
-        { text: t.openGallery, onPress: openScreenshotPicker },
-      ]
-    );
-  };
-
-  const openInfluencerSearch = useCallback(() => {
-    const query = influencerSearchQuery.trim();
-    if (!query) {
-      Alert.alert(t.searchEmpty, undefined, [{ text: t.ok }]);
-      return;
-    }
-    (navigation as any).navigate('Monetization', {
-      tab: 'register',
-      initialQuery: query,
-      platform: influencerPlatform,
-    });
-  }, [influencerSearchQuery, influencerPlatform, navigation, t]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -1084,67 +1011,6 @@ export default function HomeScreen() {
               </VStack>
             </Box>
           </VStack>
-
-          {/* Buscador de influencers: debajo del nombre del usuario */}
-          <Box bg="$white" borderRadius="$lg" px="$3" py="$2" borderWidth={1} borderColor="$borderLight200">
-            <HStack alignItems="center" space="sm">
-              <HStack space="xs" alignItems="center" flex={0}>
-                {PLATFORM_OPTIONS.map((p) => {
-                  const isSelected = influencerPlatform === p.id;
-                  return (
-                    <Pressable
-                      key={p.id}
-                      onPress={() => setInfluencerPlatform(p.id)}
-                      bg={isSelected ? p.selectedBg : '$backgroundLight100'}
-                      borderRadius="$full"
-                      px="$2.5"
-                      py="$1.5"
-                      _pressed={{ opacity: 0.85 }}
-                    >
-                      <Text fontSize="$xs" fontWeight="$semibold" color={isSelected ? '$white' : '$textLight700'}>
-                        {p.short}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </HStack>
-              <Input flex={1} size="sm" borderRadius="$lg" borderColor="$borderLight300" minHeight={36}>
-                <InputField
-                  placeholder={t.searchInfluencers}
-                  value={influencerSearchQuery}
-                  onChangeText={setInfluencerSearchQuery}
-                  returnKeyType="search"
-                  onSubmitEditing={openInfluencerSearch}
-                />
-              </Input>
-              <Pressable
-                onPress={openInfluencerSearch}
-                bg="#1a73e8"
-                borderRadius="$lg"
-                px="$3"
-                py="$2"
-                alignItems="center"
-                justifyContent="center"
-                _pressed={{ opacity: 0.9 }}
-                accessibilityLabel={t.searchInfluencers}
-              >
-                <Text fontSize="$xl">🔍</Text>
-              </Pressable>
-              <Pressable
-                onPress={pickScreenshot}
-                bg={brand}
-                borderRadius="$lg"
-                p="$2"
-                minWidth={40}
-                alignItems="center"
-                justifyContent="center"
-                _pressed={{ opacity: 0.9 }}
-                accessibilityLabel={t.uploadScreenshot}
-              >
-                <Text fontSize="$xl">🖼️</Text>
-              </Pressable>
-            </HStack>
-          </Box>
 
           {/* Preferred mall - Ver ofertas */}
           {preferredMall && (

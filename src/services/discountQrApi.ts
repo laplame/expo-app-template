@@ -240,3 +240,52 @@ export async function redeemDiscountQrToken(
     return { ok: false, message: `${e?.message ?? 'Network error'} (${API_BASE_URL})` };
   }
 }
+
+export interface IssueDiscountQrByCodeRequest {
+  deviceId: string;
+  walletAddress?: string;
+}
+
+export interface IssueDiscountQrByCodeResponse {
+  ok: boolean;
+  qrValue?: string;
+  message?: string;
+  noQr?: boolean;
+  redirectToUrl?: string;
+  data?: Record<string, unknown>;
+}
+
+/** POST /api/discount-qr/codes/:shortCode/issue — emite cupón desde código corto de campaña. */
+export async function issueDiscountQrByShortCode(
+  shortCode: string,
+  payload: IssueDiscountQrByCodeRequest
+): Promise<IssueDiscountQrByCodeResponse> {
+  const code = shortCode.trim().replace(/^#/, '');
+  if (!code) return { ok: false, message: 'Código vacío' };
+  try {
+    const res = await fetch(`${API_BASE_URL}/discount-qr/codes/${encodeURIComponent(code)}/issue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const json = await parseJsonSafe(res);
+    if (!res.ok) {
+      return {
+        ok: false,
+        message: json?.message ?? json?.error ?? `HTTP ${res.status}`,
+        data: json,
+      };
+    }
+    return {
+      ok: json?.ok !== false && json?.success !== false,
+      qrValue: typeof json?.qrValue === 'string' ? json.qrValue : undefined,
+      message: typeof json?.message === 'string' ? json.message : undefined,
+      noQr: !!json?.noQr,
+      redirectToUrl: typeof json?.redirectToUrl === 'string' ? json.redirectToUrl : undefined,
+      data: json,
+    };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, message: msg || 'Network error' };
+  }
+}

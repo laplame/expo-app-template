@@ -1,7 +1,7 @@
 /**
- * Panel del influencer: promociones, deals y redenciones (API + enlace al portal web).
+ * Panel del influencer: promociones, deals, abonos y campañas accionables.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import {
   ScrollView,
   RefreshControl,
@@ -19,27 +19,16 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { RootStackParamList } from '../navigation/AppNavigator';
 import { useSettings } from '../context/SettingsContext';
 import { useBrandTheme } from '../theme/useBrandTheme';
-import {
-  getInfluencerMe,
-  resolveInfluencerImageUrl,
-  type InfluencerDoc,
-} from '../services/influencersApi';
-import {
-  verifyInfluencerSession,
-  getInfluencerAppCampaigns,
-  type InfluencerAppCampaign,
-} from '../services/influencerAppApi';
-import {
-  getAuthAccessToken,
-  getWalletAddresses,
-  setInfluencerSessionCache,
-} from '../services/storage';
-import { getOrCreateDeviceId } from '../services/deviceIdentity';
+import { resolveInfluencerImageUrl } from '../services/influencersApi';
+import { campaignDisplayTitle, type InfluencerAppCampaign } from '../services/influencerAppApi';
+import { useInfluencerAppSession } from '../hooks/useInfluencerAppSession';
+import InfluencerSettlementsCard from '../components/InfluencerSettlementsCard';
+import InfluencerCampaignCard from '../components/InfluencerCampaignCard';
 import {
   getInfluencerOwnerPortalUrl,
-  getInfluencerSetupUrl,
   getInfluencerProfileUrl,
   openInfluencerProfile,
+  openInfluencerSetup,
 } from '../utils/influencerProfileUrl';
 
 const POLL_MS = 30_000;
@@ -52,33 +41,15 @@ type DealRow = {
   metric?: string;
 };
 
-function buildDealRows(
-  profile: InfluencerDoc | null,
-  campaigns: InfluencerAppCampaign[],
+function buildLegacyDealRows(
+  profile: ReturnType<typeof useInfluencerAppSession>['profile'],
   language: 'es' | 'en'
 ): DealRow[] {
   const rows: DealRow[] = [];
-  const seen = new Set<string>();
-
-  for (const c of campaigns) {
-    const id = String(c.id ?? c._id ?? c.promotionId ?? c.title ?? '');
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    rows.push({
-      key: `camp-${id}`,
-      title: String(c.title ?? 'Campaña'),
-      subtitle: language === 'es' ? 'Campaña activa' : 'Active campaign',
-      status: String(c.status ?? 'active'),
-      metric:
-        c.discountPercentage != null ? `${c.discountPercentage}%` : c.shortCode ? `#${c.shortCode}` : undefined,
-    });
-  }
-
   const promos = profile?.recentPromotions ?? [];
   for (const p of promos) {
     const id = String(p.id ?? p._id ?? p.title ?? '');
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
+    if (!id) continue;
     const parts: string[] = [];
     if (p.brand) parts.push(p.brand);
     if (p.date) parts.push(p.date);
@@ -91,59 +62,67 @@ function buildDealRows(
       metric: p.earnings != null ? `$${p.earnings}` : undefined,
     });
   }
-
   return rows;
 }
 
 export interface InfluencerIdentityScreenProps {
-  /** Dentro de Monetización: sin cabecera duplicada. */
   embedded?: boolean;
-  onGoRegister?: () => void;
 }
 
 export default function InfluencerIdentityScreen({
   embedded = false,
-  onGoRegister,
 }: InfluencerIdentityScreenProps = {}) {
   const { language } = useSettings();
   const { brand } = useBrandTheme();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
 
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(false);
-  const [notLinked, setNotLinked] = useState(false);
-  const [profile, setProfile] = useState<InfluencerDoc | null>(null);
-  const [campaigns, setCampaigns] = useState<InfluencerAppCampaign[]>([]);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const {
+    loading,
+    refreshing,
+    error,
+    needsAuth,
+    notLinked,
+    profile,
+    campaigns,
+    settlements,
+    dashboardAccess,
+    accessMessage,
+    lastUpdated,
+    accessToken,
+    walletAddress,
+    refresh,
+    processPendingPayouts,
+  } = useInfluencerAppSession();
 
   const strings = useMemo(
     () =>
       language === 'es'
         ? {
             title: 'Mi panel',
-            subtitle:
-              'Promociones, deals y redenciones en DameCodigo.com.',
+            subtitle: 'Promociones, deals y redenciones en DameCodigo.com.',
             openPortal: 'Abrir panel en DameCodigo.com',
             openPublic: 'Ver perfil público',
             refresh: 'Actualizar ahora',
-            registerWeb: 'Vincular cuenta en la web',
-            goRegisterApp: 'Registrar creador (pestaña)',
+            registerWeb: 'Darse de alta en la web',
+            goRegisterApp: 'Ver página de registro',
             liveRedemptions: 'Redenciones',
             deals: 'Promociones y deals',
+            campaigns: 'Campañas activas',
             activePromos: 'Activas',
             redeemed: 'Canjeados',
             sales: 'Ventas (cupones)',
             noDeals: 'Aún no hay promociones ni deals en tu panel.',
+            noCampaigns: 'Sin campañas activas. Espera verificación o revisa el portal web.',
             signInHint:
               'Inicia sesión en DameCodigo.com con tu cuenta de influencer para ver promociones y redenciones en tiempo real.',
             notLinkedHint:
               'Tu usuario no está vinculado a un perfil de influencer. Completa el alta en la web.',
+            pendingVerification: 'Identidad en revisión',
             updated: 'Actualizado',
             polling: 'Se actualiza cada 30 s',
             couponActive: 'Cupones activos',
+            legacyPromos: 'Otras promociones',
           }
         : {
             title: 'My panel',
@@ -151,115 +130,43 @@ export default function InfluencerIdentityScreen({
             openPortal: 'Open panel on DameCodigo.com',
             openPublic: 'View public profile',
             refresh: 'Refresh now',
-            registerWeb: 'Link account on web',
-            goRegisterApp: 'Register creator (tab)',
+            registerWeb: 'Sign up on the web',
+            goRegisterApp: 'View registration page',
             liveRedemptions: 'Redemptions',
             deals: 'Promotions & deals',
+            campaigns: 'Active campaigns',
             activePromos: 'Active',
             redeemed: 'Redeemed',
             sales: 'Sales (coupons)',
             noDeals: 'No promotions or deals in your panel yet.',
+            noCampaigns: 'No active campaigns. Await verification or check the web portal.',
             signInHint:
               'Sign in on DameCodigo.com with your influencer account to see promotions and live redemptions.',
             notLinkedHint:
               'Your user is not linked to an influencer profile. Complete setup on the web.',
+            pendingVerification: 'Identity under review',
             updated: 'Updated',
             polling: 'Refreshes every 30s',
             couponActive: 'Active coupons',
+            legacyPromos: 'Other promotions',
           },
     [language]
   );
 
-  const loadSession = useCallback(
-    async (isRefresh?: boolean) => {
-      if (isRefresh) setRefreshing(true);
-      else setLoading(true);
-      setError(null);
-      setNeedsAuth(false);
-      setNotLinked(false);
-
-      const token = await getAuthAccessToken();
-      if (!token) {
-        setProfile(null);
-        setCampaigns([]);
-        setNeedsAuth(true);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      const deviceId = await getOrCreateDeviceId();
-      const wallets = await getWalletAddresses();
-      const defaultWallet = wallets.find((w) => w.isDefault) ?? wallets[0];
-
-      const [meRes, verifyRes, campRes] = await Promise.all([
-        getInfluencerMe(token),
-        verifyInfluencerSession(
-          {
-            deviceId,
-            walletAddress: defaultWallet?.address,
-            preferredNetwork: defaultWallet?.chain === 'polygon' ? 'polygon' : 'ethereum',
-          },
-          token
-        ),
-        getInfluencerAppCampaigns(token),
-      ]);
-
-      if (verifyRes.code === 'INFLUENCER_NOT_LINKED' || meRes.code === 'INFLUENCER_NOT_LINKED') {
-        setNotLinked(true);
-        setProfile(null);
-        setCampaigns([]);
-        setLoading(false);
-        setRefreshing(false);
-        return;
-      }
-
-      const doc = meRes.ok ? meRes.data : verifyRes.influencer ?? null;
-      if (!doc && !meRes.ok && !verifyRes.ok) {
-        setError(meRes.error ?? verifyRes.error ?? 'Error');
-        setProfile(null);
-        setCampaigns([]);
-      } else {
-        const merged = doc ? { ...doc, ...(verifyRes.influencer ?? {}) } : null;
-        setProfile(merged);
-        const campList =
-          (campRes.ok && campRes.campaigns?.length ? campRes.campaigns : verifyRes.campaigns) ?? [];
-        setCampaigns(campList);
-        if (merged) {
-          const id = merged._id ?? merged.id;
-          await setInfluencerSessionCache({
-            savedAt: Date.now(),
-            influencerId: id,
-            publicSlug: merged.publicSlug ?? merged.username,
-            displayName: merged.displayName ?? merged.name,
-          });
-        }
-      }
-
-      setLastUpdated(new Date());
-      setLoading(false);
-      setRefreshing(false);
-    },
-    []
-  );
-
   useFocusEffect(
-    useCallback(() => {
-      void loadSession();
-    }, [loadSession])
+    React.useCallback(() => {
+      void refresh();
+    }, [refresh])
   );
 
   useEffect(() => {
     const id = setInterval(() => {
-      void loadSession(true);
+      void refresh(true);
     }, POLL_MS);
     return () => clearInterval(id);
-  }, [loadSession]);
+  }, [refresh]);
 
-  const dealRows = useMemo(
-    () => buildDealRows(profile, campaigns, language),
-    [profile, campaigns, language]
-  );
+  const legacyRows = useMemo(() => buildLegacyDealRows(profile, language), [profile, language]);
 
   const stats = useMemo(() => {
     const cs = profile?.couponStats;
@@ -279,6 +186,9 @@ export default function InfluencerIdentityScreen({
   const displayName = profile?.displayName ?? profile?.name ?? '—';
   const publicUrl = profile ? getInfluencerProfileUrl(profile) : null;
 
+  const campaignKey = (c: InfluencerAppCampaign) =>
+    String(c.id ?? c._id ?? c.promotionId ?? c.shortCode ?? campaignDisplayTitle(c));
+
   return (
     <Box flex={1} bg="#f4f6f8">
       {!embedded ? <StatusBar style="dark" /> : null}
@@ -291,7 +201,7 @@ export default function InfluencerIdentityScreen({
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => void loadSession(true)}
+            onRefresh={() => void refresh(true)}
             tintColor={brand}
             colors={[brand]}
           />
@@ -364,22 +274,14 @@ export default function InfluencerIdentityScreen({
               {strings.notLinkedHint}
             </Text>
             <VStack space="sm" mt="$4">
-              <Button
-                size="md"
-                bg={brand}
-                onPress={() => Linking.openURL(getInfluencerSetupUrl()).catch(() => {})}
-              >
+              <Button size="md" bg={brand} onPress={() => void openInfluencerSetup(language)}>
                 <ButtonText>{strings.registerWeb}</ButtonText>
               </Button>
               <Button
                 size="md"
                 variant="outline"
                 borderColor={brand}
-                onPress={() =>
-                  onGoRegister
-                    ? onGoRegister()
-                    : navigation.navigate('Monetization', { tab: 'register' })
-                }
+                onPress={() => navigation.navigate('Monetization')}
               >
                 <ButtonText color={brand}>{strings.goRegisterApp}</ButtonText>
               </Button>
@@ -389,7 +291,20 @@ export default function InfluencerIdentityScreen({
           <>
             {error ? (
               <Box bg="#fee2e2" borderRadius="$md" p="$3" mb="$3">
-                <Text fontSize="$sm" color="#991b1b">{error}</Text>
+                <Text fontSize="$sm" color="#991b1b">
+                  {error}
+                </Text>
+              </Box>
+            ) : null}
+
+            {!dashboardAccess && accessMessage ? (
+              <Box bg="#fef3c7" borderRadius="$md" p="$3" mb="$3" borderWidth={1} borderColor="#fcd34d">
+                <Text fontSize="$sm" fontWeight="$semibold" color="#92400e" mb="$1">
+                  {strings.pendingVerification}
+                </Text>
+                <Text fontSize="$sm" color="#92400e" lineHeight="$md">
+                  {accessMessage}
+                </Text>
               </Box>
             ) : null}
 
@@ -430,11 +345,19 @@ export default function InfluencerIdentityScreen({
             </Box>
 
             <HStack space="sm" mb="$4" flexWrap="wrap">
-              <StatChip label={strings.activePromos} value={String(stats.active)} />
-              <StatChip label={strings.redeemed} value={String(stats.redeemed)} />
-              <StatChip label={strings.sales} value={String(stats.sales)} />
-              <StatChip label={strings.couponActive} value={String(stats.activeCoupons)} />
+              <StatChip brand={brand} label={strings.activePromos} value={String(stats.active)} />
+              <StatChip brand={brand} label={strings.redeemed} value={String(stats.redeemed)} />
+              <StatChip brand={brand} label={strings.sales} value={String(stats.sales)} />
+              <StatChip brand={brand} label={strings.couponActive} value={String(stats.activeCoupons)} />
             </HStack>
+
+            <InfluencerSettlementsCard
+              settlements={settlements}
+              dashboardAccess={dashboardAccess}
+              language={language}
+              brand={brand}
+              onProcessPending={processPendingPayouts}
+            />
 
             <Text fontSize="$md" fontWeight="$bold" color={brand} mb="$2">
               {strings.liveRedemptions}
@@ -457,23 +380,60 @@ export default function InfluencerIdentityScreen({
               </Text>
             </Box>
 
-            <Text fontSize="$md" fontWeight="$bold" color={brand} mb="$2">
-              {strings.deals}
-            </Text>
-            {dealRows.length === 0 ? (
+            {dashboardAccess ? (
+              <>
+                <Text fontSize="$md" fontWeight="$bold" color={brand} mb="$2">
+                  {strings.campaigns}
+                </Text>
+                {campaigns.length === 0 ? (
+                  <Text fontSize="$sm" color="$textLight500" mb="$4">
+                    {strings.noCampaigns}
+                  </Text>
+                ) : accessToken ? (
+                  <VStack space="sm" mb="$4">
+                    {campaigns.map((c) => (
+                      <InfluencerCampaignCard
+                        key={campaignKey(c)}
+                        campaign={c}
+                        accessToken={accessToken}
+                        walletAddress={walletAddress}
+                        language={language}
+                        brand={brand}
+                      />
+                    ))}
+                  </VStack>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Text fontSize="$md" fontWeight="$bold" color={brand} mb="$2">
+                  {strings.deals}
+                </Text>
+                <Text fontSize="$sm" color="$textLight500" mb="$4">
+                  {strings.noCampaigns}
+                </Text>
+              </>
+            )}
+
+            {legacyRows.length > 0 ? (
+              <>
+                <Text fontSize="$md" fontWeight="$bold" color={brand} mb="$2">
+                  {strings.legacyPromos}
+                </Text>
+                <VStack space="sm" mb="$4">
+                  {legacyRows.map((row) => (
+                    <DealCard key={row.key} brand={brand} row={row} />
+                  ))}
+                </VStack>
+              </>
+            ) : dashboardAccess && campaigns.length === 0 && legacyRows.length === 0 ? (
               <Text fontSize="$sm" color="$textLight500" mb="$4">
                 {strings.noDeals}
               </Text>
-            ) : (
-              <VStack space="sm" mb="$4">
-                {dealRows.map((row) => (
-                  <DealCard key={row.key} row={row} />
-                ))}
-              </VStack>
-            )}
+            ) : null}
 
             <Pressable
-              onPress={() => void loadSession(true)}
+              onPress={() => void refresh(true)}
               style={({ pressed }) => [styles.refreshLink, pressed && { opacity: 0.85 }]}
             >
               <Text style={[styles.refreshLinkText, { color: brand }]}>{strings.refresh}</Text>
@@ -485,7 +445,15 @@ export default function InfluencerIdentityScreen({
   );
 }
 
-function StatChip({ label, value }: { label: string; value: string }) {
+function StatChip({
+  label,
+  value,
+  brand,
+}: {
+  label: string;
+  value: string;
+  brand: string;
+}) {
   return (
     <Box
       flex={1}
@@ -506,15 +474,15 @@ function StatChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DealCard({ row }: { row: DealRow }) {
+function DealCard({
+  row,
+  brand,
+}: {
+  row: DealRow;
+  brand: string;
+}) {
   return (
-    <Box
-      bg="$white"
-      borderRadius="$lg"
-      p="$3"
-      borderWidth={1}
-      borderColor="$borderLight200"
-    >
+    <Box bg="$white" borderRadius="$lg" p="$3" borderWidth={1} borderColor="$borderLight200">
       <HStack justifyContent="space-between" alignItems="flex-start">
         <VStack flex={1} pr="$2">
           <Text fontSize="$sm" fontWeight="$bold" color="#111">

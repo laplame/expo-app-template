@@ -11,9 +11,14 @@ export function getInfluencerOwnerPortalUrl(): string {
   return `${getSiteOrigin()}/influencer/me`;
 }
 
-/** Alta / registro de nuevo perfil en la web. */
+/** Alta / verificación de influencer en la web (login, registro, identidad). */
+export function getInfluencerAuthUrl(): string {
+  return `${getSiteOrigin()}/influencer/auth`;
+}
+
+/** @deprecated Usar getInfluencerAuthUrl */
 export function getInfluencerSetupUrl(): string {
-  return `${getSiteOrigin()}/influencer-setup`;
+  return getInfluencerAuthUrl();
 }
 
 export function getSiteOrigin(): string {
@@ -106,6 +111,38 @@ export function getInfluencerProfileUrl(doc: InfluencerDoc): string | null {
   const slug = getInfluencerPublicSlug(doc);
   if (!slug) return null;
   return `${getSiteOrigin()}/influencer/${slug}`;
+}
+
+/** Abre el panel web del creador (/influencer/me). */
+export async function openInfluencerOwnerPortal(language: 'es' | 'en' = 'es'): Promise<boolean> {
+  const url = getInfluencerOwnerPortalUrl();
+  try {
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    Alert.alert(
+      language === 'es' ? 'No se pudo abrir' : 'Could not open',
+      url,
+      [{ text: 'OK' }]
+    );
+    return false;
+  }
+}
+
+/** Abre la página web de alta/verificación de influencer (/influencer/auth). */
+export async function openInfluencerSetup(language: 'es' | 'en' = 'es'): Promise<boolean> {
+  const url = getInfluencerAuthUrl();
+  try {
+    await Linking.openURL(url);
+    return true;
+  } catch {
+    Alert.alert(
+      language === 'es' ? 'No se pudo abrir' : 'Could not open',
+      url,
+      [{ text: 'OK' }]
+    );
+    return false;
+  }
 }
 
 export async function openInfluencerProfile(

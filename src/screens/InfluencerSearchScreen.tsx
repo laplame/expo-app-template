@@ -89,7 +89,7 @@ export interface InfluencerSearchScreenProps {
 
 export default function InfluencerSearchScreen(props: InfluencerSearchScreenProps = {}) {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
-  const route = useRoute<RouteProp<RootStackParamList, 'Monetization'>>();
+  const route = useRoute<RouteProp<RootStackParamList, 'InfluencerSearch'>>();
   const { language, currency } = useSettings();
   const { brand, brandBg, brandBorder } = useBrandTheme();
   const { addLuxaeBalance } = useWalletBalance();
