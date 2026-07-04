@@ -65,7 +65,11 @@ export function getInfluencersFeedStrings(lang: UiLanguage) {
       personWantsPromo: 'persona quiere su promoción',
       youVotedBadge: 'Tú votaste',
       yourVotesCount: 'Has apoyado a {n} creador(es)',
-    };
+      trending: 'Tendencia',
+      allCategories: 'Todos',
+      followers: 'seguidores',
+      votes: 'votos',
+    } as const;
   }
   return {
     feedKicker: 'FEED',
@@ -89,7 +93,11 @@ export function getInfluencersFeedStrings(lang: UiLanguage) {
     personWantsPromo: 'person wants their promotion',
     youVotedBadge: 'You voted',
     yourVotesCount: 'You supported {n} creator(s)',
-  };
+    trending: 'Trending',
+    allCategories: 'All',
+    followers: 'followers',
+    votes: 'votes',
+  } as const;
 }
 
 export type WalletScreenStrings = ReturnType<typeof getWalletScreenStrings>;
@@ -294,6 +302,9 @@ export function getNetworkP2PStrings(lang: UiLanguage) {
         'Correo privado Nostr (NIP-59). Misma clave que Social Layer. Compatible con Nmail.',
       emailDexOpen: 'Abrir bandeja',
       emailDexOpenNmail: 'Abrir Nmail (web)',
+      follow: 'Seguir',
+      unfollow: 'Dejar de seguir',
+      closeModal: 'Cerrar',
     };
   }
   return {
@@ -413,6 +424,9 @@ export function getNetworkP2PStrings(lang: UiLanguage) {
       'Private Nostr mail (NIP-59). Same key as Social Layer. Nmail-compatible.',
     emailDexOpen: 'Open inbox',
     emailDexOpenNmail: 'Open Nmail (web)',
+    follow: 'Follow',
+    unfollow: 'Unfollow',
+    closeModal: 'Close',
   };
 }
 

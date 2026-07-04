@@ -14,6 +14,7 @@ import {
   RefreshControl,
   StyleSheet,
   Linking,
+  Image,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -24,7 +25,7 @@ import { useBrandTheme } from '../theme/useBrandTheme';
 import InfluencerCard from '../components/InfluencerCard';
 import PromotionCard from '../components/PromotionCard';
 import InfluencerSearchBar from '../components/InfluencerSearchBar';
-import { getAllInfluencers, type InfluencerDoc } from '../services/influencersApi';
+import { getAllInfluencers, type InfluencerDoc, resolveInfluencerImageUrl } from '../services/influencersApi';
 import {
   getPromotions,
   type ApiPromotionDoc,
@@ -145,6 +146,7 @@ export default function InfluencersListScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
 
   const loadData = useCallback(async (isRefresh?: boolean) => {
     if (isRefresh) setRefreshing(true);
@@ -237,9 +239,40 @@ export default function InfluencersListScreen() {
     [win.width]
   );
 
+  const allCategories = useMemo<string[]>(() => {
+    const seen = new Set<string>();
+    for (const inf of influencers) {
+      for (const cat of inf.categories ?? []) {
+        if (cat) seen.add(cat);
+      }
+    }
+    return Array.from(seen).sort();
+  }, [influencers]);
+
+  const filteredInfluencers = useMemo<InfluencerDoc[]>(() => {
+    if (!selectedCategory) return influencers;
+    return influencers.filter((inf) => inf.categories?.includes(selectedCategory));
+  }, [influencers, selectedCategory]);
+
+  const trendingInfluencers = useMemo<InfluencerDoc[]>(() => {
+    return [...influencers]
+      .filter((inf) => {
+        const id = inf._id ?? inf.id ?? '';
+        return id !== '';
+      })
+      .sort((a, b) => {
+        const idA = a._id ?? a.id ?? '';
+        const idB = b._id ?? b.id ?? '';
+        const cA = voteTallies[idA] ?? (a as { wantPromotionCount?: number }).wantPromotionCount ?? 0;
+        const cB = voteTallies[idB] ?? (b as { wantPromotionCount?: number }).wantPromotionCount ?? 0;
+        return cB - cA;
+      })
+      .slice(0, 5);
+  }, [influencers, voteTallies]);
+
   const feedItems = useMemo(
-    () => interleaveWithPromotions(influencers, promotions, 3, { leadPromo: promotions.length > 0 }),
-    [influencers, promotions]
+    () => interleaveWithPromotions(filteredInfluencers, promotions, 3, { leadPromo: promotions.length > 0 }),
+    [filteredInfluencers, promotions]
   );
 
   const { left, right } = useMemo(
@@ -349,6 +382,87 @@ export default function InfluencersListScreen() {
           <InfluencerSearchBar language={language} brand={brand} />
         </View>
 
+        {!loading && trendingInfluencers.length > 0 ? (
+          <View style={styles.trendingSection}>
+            <Text style={[styles.trendingLabel, { color: brand }]}>
+              {strings.trending.toUpperCase()}
+            </Text>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.trendingScroll}
+            >
+              {trendingInfluencers.map((inf) => {
+                const id = inf._id ?? inf.id ?? '';
+                const isVoted = votedIds.has(id);
+                const count = resolveInfluencerDisplayVoteCount(id, voteTallies, getServerVoteBaseline(inf));
+                const avatarUri = resolveInfluencerImageUrl(inf.avatar ?? inf.profileImageUrl);
+                const name = inf.displayName ?? inf.name ?? inf.username ?? '?';
+                return (
+                  <Pressable
+                    key={`trending-${id}`}
+                    style={styles.trendingCard}
+                    onPress={() => void openInfluencerProfile(inf, language)}
+                  >
+                    <View style={[styles.trendingAvatarWrap, isVoted && { borderColor: brand }]}>
+                      {avatarUri ? (
+                        <Image source={{ uri: avatarUri }} style={styles.trendingAvatar} />
+                      ) : (
+                        <View style={[styles.trendingAvatar, styles.trendingAvatarFallback]}>
+                          <Text style={styles.trendingAvatarInitial}>{name.charAt(0).toUpperCase()}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <Text style={styles.trendingName} numberOfLines={1}>{name}</Text>
+                    {count != null && count > 0 ? (
+                      <View style={[styles.trendingVoteBadge, { backgroundColor: isVoted ? brand : '#e5e7eb' }]}>
+                        <Text style={[styles.trendingVoteCount, { color: isVoted ? '#fff' : '#374151' }]}>
+                          {count}
+                        </Text>
+                      </View>
+                    ) : null}
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
+
+        {!loading && allCategories.length > 0 ? (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoryScroll}
+          >
+            <Pressable
+              key="cat-all"
+              style={[
+                styles.categoryChip,
+                !selectedCategory && { backgroundColor: brand, borderColor: brand },
+              ]}
+              onPress={() => setSelectedCategory(null)}
+            >
+              <Text style={[styles.categoryChipText, !selectedCategory && { color: '#fff' }]}>
+                {strings.allCategories}
+              </Text>
+            </Pressable>
+            {allCategories.map((cat) => (
+              <Pressable
+                key={`cat-${cat}`}
+                style={[
+                  styles.categoryChip,
+                  selectedCategory === cat && { backgroundColor: brand, borderColor: brand },
+                ]}
+                onPress={() => setSelectedCategory((prev) => (prev === cat ? null : cat))}
+              >
+                <Text style={[styles.categoryChipText, selectedCategory === cat && { color: '#fff' }]}>
+                  {cat}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        ) : null}
+
         {error ? (
           <View style={styles.errorBox}>
             <Text style={styles.errorText}>{error}</Text>
@@ -368,6 +482,8 @@ export default function InfluencersListScreen() {
           </View>
         ) : influencers.length === 0 ? (
           <Text style={styles.emptyText}>{strings.empty}</Text>
+        ) : filteredInfluencers.length === 0 ? (
+          <Text style={styles.emptyText}>{selectedCategory}</Text>
         ) : (
           <View style={styles.masonryRow}>
             <View style={styles.column}>{left.map(renderFeedItem)}</View>
@@ -534,5 +650,85 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     overflow: 'hidden',
     backgroundColor: '#fff',
+  },
+  trendingSection: {
+    marginBottom: 12,
+  },
+  trendingLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  trendingScroll: {
+    paddingRight: 8,
+    gap: 12,
+    flexDirection: 'row',
+  },
+  trendingCard: {
+    alignItems: 'center',
+    width: 64,
+  },
+  trendingAvatarWrap: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    borderWidth: 2.5,
+    borderColor: '#e5e7eb',
+    overflow: 'hidden',
+    marginBottom: 5,
+  },
+  trendingAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+  },
+  trendingAvatarFallback: {
+    backgroundColor: '#dbeafe',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trendingAvatarInitial: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#1d4ed8',
+  },
+  trendingName: {
+    fontSize: 11,
+    color: '#374151',
+    fontWeight: '600',
+    textAlign: 'center',
+    maxWidth: 64,
+  },
+  trendingVoteBadge: {
+    marginTop: 4,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    minWidth: 24,
+    alignItems: 'center',
+  },
+  trendingVoteCount: {
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  categoryScroll: {
+    paddingRight: 8,
+    gap: 8,
+    flexDirection: 'row',
+    marginBottom: 12,
+  },
+  categoryChip: {
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderWidth: 1.5,
+    borderColor: '#d1d5db',
+    backgroundColor: '#fff',
+  },
+  categoryChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
   },
 });

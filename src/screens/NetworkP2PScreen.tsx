@@ -156,6 +156,62 @@ function feedTitle(
   return h ? `${t.feedHeadHashtag} #${h}` : t.filterHashtag;
 }
 
+function NostrContentText({
+  content,
+  bodyStyle,
+  accentColor,
+}: {
+  content: string;
+  bodyStyle: object;
+  accentColor: string;
+}) {
+  const segments = useMemo(() => {
+    const parts: { text: string; type: 'text' | 'url' | 'hashtag' }[] = [];
+    const combinedRe = /https?:\/\/[^\s<>"']+|#[\wÀ-ɏḀ-ỿ]{1,64}/g;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    while ((m = combinedRe.exec(content)) !== null) {
+      if (m.index > last) {
+        parts.push({ text: content.slice(last, m.index), type: 'text' });
+      }
+      const val = m[0];
+      parts.push({ text: val, type: val.startsWith('http') ? 'url' : 'hashtag' });
+      last = m.index + val.length;
+    }
+    if (last < content.length) {
+      parts.push({ text: content.slice(last), type: 'text' });
+    }
+    return parts;
+  }, [content]);
+
+  return (
+    <Text style={bodyStyle}>
+      {segments.map((seg, i) => {
+        if (seg.type === 'url') {
+          return (
+            <Text
+              key={i}
+              style={{ color: accentColor, textDecorationLine: 'underline' }}
+              onPress={() => Linking.openURL(seg.text).catch(() => {})}
+              numberOfLines={1}
+            >
+              {seg.text.length > 60 ? `${seg.text.slice(0, 57)}…` : seg.text}
+            </Text>
+          );
+        }
+        if (seg.type === 'hashtag') {
+          return (
+            <Text key={i} style={{ color: accentColor, fontWeight: '600' }}>
+              {seg.text}
+            </Text>
+          );
+        }
+        return <Text key={i}>{seg.text}</Text>;
+      })}
+    </Text>
+  );
+}
+
 export default function NetworkP2PScreen() {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<Nav>();
@@ -218,6 +274,7 @@ export default function NetworkP2PScreen() {
   const [emailDexPanelOpen, setEmailDexPanelOpen] = useState(false);
   /** Evita fetch con modo por defecto antes de leer AsyncStorage; permite hidratar el feed en caché. */
   const [nostrSocialPrefsReady, setNostrSocialPrefsReady] = useState(false);
+  const [viewedAuthor, setViewedAuthor] = useState<NostrFeedItem | null>(null);
 
   const qrSharePayload = useMemo(
     () => (pubHex ? encodeNprofileQrPayload(pubHex) : ''),
@@ -716,6 +773,22 @@ export default function NetworkP2PScreen() {
     (configPanelOpen ? configPanelHeight : 0);
   const fabBottom = bottomPad + bottomPanelExtra + 12;
 
+  const trendingHashtags = useMemo<string[]>(() => {
+    const freq: Record<string, number> = {};
+    const tagRe = /#(\w{2,32})/g;
+    for (const it of items) {
+      let m: RegExpExecArray | null;
+      while ((m = tagRe.exec(it.content)) !== null) {
+        const tag = m[1].toLowerCase();
+        freq[tag] = (freq[tag] ?? 0) + 1;
+      }
+    }
+    return Object.entries(freq)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([tag]) => tag);
+  }, [items]);
+
   const nostrBarMeta = useMemo(() => {
     const relay =
       relayHint === 'ok' ? t.nostrBarRelayOk : t.nostrBarRelayWarn;
@@ -761,19 +834,23 @@ export default function NetworkP2PScreen() {
           </Text>
         ) : null}
         <View style={styles.postRow}>
-          <Image
-            source={{
-              uri:
-                (item.avatarUrl && item.avatarUrl.trim()) ||
-                `https://picsum.photos/seed/${item.pubkey.slice(0, 8)}/96/96`,
-            }}
-            style={styles.avatar}
-          />
+          <Pressable onPress={() => setViewedAuthor(item)} hitSlop={6}>
+            <Image
+              source={{
+                uri:
+                  (item.avatarUrl && item.avatarUrl.trim()) ||
+                  `https://picsum.photos/seed/${item.pubkey.slice(0, 8)}/96/96`,
+              }}
+              style={styles.avatar}
+            />
+          </Pressable>
           <View style={styles.postMain}>
             <View style={styles.nameRow}>
-              <Text style={styles.displayName} numberOfLines={1}>
-                {item.name}
-              </Text>
+              <Pressable onPress={() => setViewedAuthor(item)} hitSlop={6}>
+                <Text style={styles.displayName} numberOfLines={1}>
+                  {item.name}
+                </Text>
+              </Pressable>
               {item.verified ? (
                 <Text style={styles.verified}> ✓</Text>
               ) : null}
@@ -785,7 +862,11 @@ export default function NetworkP2PScreen() {
                 {formatRelativeTime(item.createdAt, t.now)}
               </Text>
             </View>
-            <Text style={styles.body}>{item.content}</Text>
+            <NostrContentText
+              content={item.content}
+              bodyStyle={styles.body}
+              accentColor={palette.accent}
+            />
             {item.imageUrls.map((uri) => (
               <FeedNoteImage
                 key={uri}
@@ -902,6 +983,38 @@ export default function NetworkP2PScreen() {
         scrollEventThrottle={16}
         ListHeaderComponent={
           <>
+            {trendingHashtags.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.hashtagRow}
+              >
+                {trendingHashtags.map((tag) => (
+                  <Pressable
+                    key={`htag-${tag}`}
+                    style={[
+                      styles.hashtagChip,
+                      hashtagState === tag && { backgroundColor: palette.accent },
+                    ]}
+                    onPress={() => {
+                      const next = hashtagState === tag ? '' : tag;
+                      setHashtagState(next);
+                      void setNostrHashtag(next);
+                      if (next) setFeedMode('hashtag');
+                    }}
+                  >
+                    <Text
+                      style={[
+                        styles.hashtagChipText,
+                        hashtagState === tag && { color: '#fff' },
+                      ]}
+                    >
+                      #{tag}
+                    </Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            ) : null}
             {feedMode === 'following' && following.length === 0 ? (
               <Text style={styles.emptyHint}>{t.followingEmpty}</Text>
             ) : null}
@@ -946,6 +1059,79 @@ export default function NetworkP2PScreen() {
         </View>
       </Modal>
 
+      <Modal visible={!!viewedAuthor} transparent animationType="fade">
+        <Pressable
+          style={styles.authorBackdrop}
+          onPress={() => setViewedAuthor(null)}
+          accessibilityRole="button"
+        />
+        {viewedAuthor ? (
+          <View style={[styles.authorPanel, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <View style={styles.authorPanelHeader}>
+              <Image
+                source={{
+                  uri:
+                    (viewedAuthor.avatarUrl && viewedAuthor.avatarUrl.trim()) ||
+                    `https://picsum.photos/seed/${viewedAuthor.pubkey.slice(0, 8)}/96/96`,
+                }}
+                style={styles.authorPanelAvatar}
+              />
+              <View style={styles.authorPanelMeta}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={styles.authorPanelName} numberOfLines={1}>
+                    {viewedAuthor.name}
+                  </Text>
+                  {viewedAuthor.verified ? <Text style={styles.authorPanelBadge}>✓</Text> : null}
+                </View>
+                {viewedAuthor.nip05 ? (
+                  <Text style={styles.authorPanelNip05} numberOfLines={1}>
+                    {viewedAuthor.nip05}
+                  </Text>
+                ) : null}
+                <Text style={styles.authorPanelNpub} numberOfLines={1}>
+                  {viewedAuthor.pubkey.slice(0, 12)}…
+                </Text>
+              </View>
+            </View>
+            <View style={styles.authorPanelActions}>
+              <Pressable
+                style={[
+                  styles.authorFollowBtn,
+                  following.includes(viewedAuthor.pubkey) && styles.authorUnfollowBtn,
+                ]}
+                onPress={async () => {
+                  if (!viewedAuthor) return;
+                  const pk = viewedAuthor.pubkey;
+                  if (following.includes(pk)) {
+                    await removeNostrFollowing(pk);
+                    setFollowing((prev) => prev.filter((x) => x !== pk));
+                  } else {
+                    await addNostrFollowing(pk);
+                    setFollowing((prev) => [...prev, pk]);
+                  }
+                  setViewedAuthor(null);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.authorFollowBtnText,
+                    following.includes(viewedAuthor.pubkey) && { color: palette.text },
+                  ]}
+                >
+                  {following.includes(viewedAuthor.pubkey) ? t.unfollow : t.follow}
+                </Text>
+              </Pressable>
+              <Pressable
+                style={styles.authorDismissBtn}
+                onPress={() => setViewedAuthor(null)}
+              >
+                <Text style={styles.authorDismissBtnText}>{t.closeModal}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+      </Modal>
+
       <Pressable
         style={[styles.fab, { bottom: fabBottom }]}
         onPress={() => setComposeOpen(true)}
@@ -954,12 +1140,14 @@ export default function NetworkP2PScreen() {
       </Pressable>
 
       <CollapsibleBottomPanel
-        visible={bottomPanelOpen && !displayNickname}
+        visible={bottomPanelOpen}
         bottom={bottomPad}
         backgroundUri={appBackgroundUri}
       >
           <View style={styles.bottomPanelHeader}>
-            <Text style={styles.bottomPanelTitle}>{t.bottomPanelTitle}</Text>
+            <Text style={styles.bottomPanelTitle}>
+              {displayNickname ? `👤 ${displayNickname}` : t.bottomPanelTitle}
+            </Text>
             <Pressable
               onPress={() => setBottomPanelOpen(false)}
               hitSlop={10}
@@ -968,27 +1156,55 @@ export default function NetworkP2PScreen() {
               <Text style={styles.bottomPanelClose}>{t.bottomPanelClose} ▾</Text>
             </Pressable>
           </View>
-          <Text style={styles.bottomPanelHint}>{t.nostrNoNameHint}</Text>
-          <Pressable
-            style={styles.bottomPanelBtn}
-            onPress={() => {
-              setBottomPanelOpen(false);
-              navigation.navigate('NYC');
-            }}
-          >
-            <Text style={styles.bottomPanelBtnText}>{t.goKyc}</Text>
-          </Pressable>
-          <Pressable
-            style={[styles.bottomPanelBtn, styles.bottomPanelBtnSecondary]}
-            onPress={() => {
-              setBottomPanelOpen(false);
-              navigation.navigate('QuickRegister');
-            }}
-          >
-            <Text style={[styles.bottomPanelBtnText, styles.bottomPanelBtnTextSecondary]}>
-              {t.goSignUp}
-            </Text>
-          </Pressable>
+          {displayNickname ? (
+            <>
+              <Text style={styles.bottomPanelHint}>{t.nostrBarProfileHint}</Text>
+              <Pressable
+                style={styles.bottomPanelBtn}
+                onPress={() => {
+                  setBottomPanelOpen(false);
+                  navigation.navigate('NYC');
+                }}
+              >
+                <Text style={styles.bottomPanelBtnText}>{t.goKyc}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.bottomPanelBtn, styles.bottomPanelBtnSecondary]}
+                onPress={() => {
+                  setBottomPanelOpen(false);
+                  navigation.navigate('Settings');
+                }}
+              >
+                <Text style={[styles.bottomPanelBtnText, styles.bottomPanelBtnTextSecondary]}>
+                  {t.socialConfigOpenSettings}
+                </Text>
+              </Pressable>
+            </>
+          ) : (
+            <>
+              <Text style={styles.bottomPanelHint}>{t.nostrNoNameHint}</Text>
+              <Pressable
+                style={styles.bottomPanelBtn}
+                onPress={() => {
+                  setBottomPanelOpen(false);
+                  navigation.navigate('NYC');
+                }}
+              >
+                <Text style={styles.bottomPanelBtnText}>{t.goKyc}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.bottomPanelBtn, styles.bottomPanelBtnSecondary]}
+                onPress={() => {
+                  setBottomPanelOpen(false);
+                  navigation.navigate('QuickRegister');
+                }}
+              >
+                <Text style={[styles.bottomPanelBtnText, styles.bottomPanelBtnTextSecondary]}>
+                  {t.goSignUp}
+                </Text>
+              </Pressable>
+            </>
+          )}
       </CollapsibleBottomPanel>
 
       <CollapsibleBottomPanel
@@ -1132,6 +1348,7 @@ export default function NetworkP2PScreen() {
       <View style={[styles.bottomNav, { paddingBottom: Math.max(insets.bottom, 8) }]}>
         <Pressable style={styles.navItem} onPress={() => navigation.navigate('Home')}>
           <Text style={styles.navIcon}>⌂</Text>
+          <Text style={styles.navLabel}>{language === 'es' ? 'Inicio' : 'Home'}</Text>
         </Pressable>
         <Pressable
           style={styles.navItem}
@@ -1139,7 +1356,10 @@ export default function NetworkP2PScreen() {
           accessibilityRole="button"
           accessibilityState={{ expanded: bottomPanelOpen }}
         >
-          <Text style={[styles.navIcon, bottomPanelOpen && styles.navIconActive]}>☰</Text>
+          <Text style={[styles.navIcon, bottomPanelOpen && styles.navIconActive]}>👤</Text>
+          <Text style={[styles.navLabel, bottomPanelOpen && { color: palette.accent }]}>
+            {language === 'es' ? 'Cuenta' : 'Account'}
+          </Text>
         </Pressable>
         <Pressable
           style={styles.navCenter}
@@ -1155,6 +1375,9 @@ export default function NetworkP2PScreen() {
           accessibilityState={{ expanded: nostrActionsExpanded }}
         >
           <Text style={[styles.navIcon, nostrActionsExpanded && styles.navIconActive]}>◔</Text>
+          <Text style={[styles.navLabel, nostrActionsExpanded && { color: palette.accent }]}>
+            Nostr
+          </Text>
         </Pressable>
         <Pressable
           style={styles.navItem}
@@ -1164,6 +1387,7 @@ export default function NetworkP2PScreen() {
           accessibilityState={{ expanded: emailDexPanelOpen }}
         >
           <Text style={[styles.navIcon, emailDexPanelOpen && styles.navIconActive]}>✉</Text>
+          <Text style={[styles.navLabel, emailDexPanelOpen && { color: palette.accent }]}>Mail</Text>
         </Pressable>
         <Pressable
           style={styles.navItem}
@@ -1173,6 +1397,9 @@ export default function NetworkP2PScreen() {
           accessibilityState={{ expanded: configPanelOpen }}
         >
           <Text style={[styles.navIcon, configPanelOpen && styles.navIconActive]}>◎</Text>
+          <Text style={[styles.navLabel, configPanelOpen && { color: palette.accent }]}>
+            {language === 'es' ? 'Config' : 'Config'}
+          </Text>
         </Pressable>
       </View>
 
@@ -1760,9 +1987,10 @@ function createNetworkP2PStyles(c: SocialLayerColors) {
     borderTopColor: c.line,
     zIndex: 21,
   },
-  navItem: { padding: 10 },
-  navIcon: { color: c.muted, fontSize: 22 },
+  navItem: { paddingHorizontal: 10, paddingTop: 6, paddingBottom: 4, alignItems: 'center' },
+  navIcon: { color: c.muted, fontSize: 20 },
   navIconActive: { color: c.accent },
+  navLabel: { color: c.muted, fontSize: 9, marginTop: 2, textAlign: 'center' },
   navCenter: {
     width: 48,
     height: 48,
@@ -1945,5 +2173,108 @@ function createNetworkP2PStyles(c: SocialLayerColors) {
   },
   walletChain: { color: c.text, fontWeight: '700', fontSize: 14 },
   walletAddr: { color: c.muted, fontSize: 13, marginTop: 4 },
+  hashtagRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    gap: 8,
+  },
+  hashtagChip: {
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: c.surface,
+    borderWidth: 1,
+    borderColor: c.line,
+  },
+  hashtagChipText: {
+    fontSize: 13,
+    color: c.accent,
+    fontWeight: '600',
+  },
+  authorBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  authorPanel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: c.surface,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  authorPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    marginBottom: 16,
+  },
+  authorPanelAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  authorPanelMeta: {
+    flex: 1,
+    gap: 2,
+  },
+  authorPanelName: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: c.text,
+  },
+  authorPanelBadge: {
+    fontSize: 14,
+    color: c.accent,
+    fontWeight: '700',
+  },
+  authorPanelNip05: {
+    fontSize: 13,
+    color: c.accent,
+  },
+  authorPanelNpub: {
+    fontSize: 11,
+    color: c.muted,
+    fontFamily: 'monospace',
+  },
+  authorPanelActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  authorFollowBtn: {
+    flex: 1,
+    backgroundColor: c.accent,
+    borderRadius: 20,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  authorUnfollowBtn: {
+    backgroundColor: 'transparent',
+    borderWidth: 1.5,
+    borderColor: c.line,
+  },
+  authorFollowBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  authorDismissBtn: {
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  authorDismissBtnText: {
+    color: c.muted,
+    fontSize: 15,
+  },
   });
 }
