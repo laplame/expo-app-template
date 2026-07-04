@@ -14,7 +14,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://www.damecodigo.com/api",
         "EXPO_PUBLIC_SITE_URL": "https://www.damecodigo.com",
-        "EXPO_PUBLIC_APP_ENV": "production"
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_AUTH_DEV_MODE": "false"
       },
       "android": {
         "buildType": "apk",
@@ -25,7 +26,8 @@
       "env": {
         "EXPO_PUBLIC_API_URL": "https://www.damecodigo.com/api",
         "EXPO_PUBLIC_SITE_URL": "https://www.damecodigo.com",
-        "EXPO_PUBLIC_APP_ENV": "production"
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_AUTH_DEV_MODE": "false"
       },
       "android": {
         "buildType": "apk",

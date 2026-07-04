@@ -740,7 +740,7 @@ export default function InfluencerSearchScreen(props: InfluencerSearchScreenProp
                       </Input>
                       <Input size="sm" w={80}>
                         <InputField
-                          placeholder="0"
+                          placeholder={language === 'es' ? '0 o 14K' : '0 or 14K'}
                           value={form.socialByPlatform[p.id]?.followers ?? ''}
                           onChangeText={(v) =>
                             setForm((f) => ({
@@ -752,7 +752,6 @@ export default function InfluencerSearchScreen(props: InfluencerSearchScreenProp
                             }))
                           }
                           keyboardType="numeric"
-                          placeholder="0 o 14K"
                         />
                       </Input>
                     </HStack>
